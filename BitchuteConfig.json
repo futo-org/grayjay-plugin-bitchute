@@ -1,0 +1,33 @@
+{
+  "name": "Bitchute (alpha)",
+  "platformUrl": "bitchute.com",
+  "description": "BitChute is a video service that prioritizes creators and champions users' freedoms and privacy.",
+  "author": "Stefan Cruz",
+  "authorUrl": "",
+  "sourceUrl": "https://faqs-exit-instruments-customer.trycloudflare.com/BitchuteConfig.json",
+  "scriptUrl": "./BitchuteScript.js",
+  "repositoryUrl": "",
+  "version": 1,
+  "iconUrl": "./BitchuteIcon.png",
+  "id": "e8b1ad5f-0c6d-497d-a5fa-0a785a16d902",
+  "scriptSignature": "",
+  "scriptPublicKey": "",
+  "packages": [
+    "Http",
+    "DOMParser"
+  ],
+  "allowEval": false,
+  "allowAllHttpHeaderAccess": false,
+  "allowUrls": [
+    "bitchute.com",
+    "*.bitchute.com"
+  ],
+  "authentication": {
+    "loginUrl": "https://old.bitchute.com/accounts/login/?next=/subscriptions/",
+    "completionUrl": "https://old.bitchute.com/subscriptions/",
+    "cookiesToFind": [
+      "sessionid"
+    ],
+    "userAgent": "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
+  }
+}

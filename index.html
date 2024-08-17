@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Install Plugin</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #f5f5f5;
+        }
+
+        p {
+            margin: 20px;
+            text-align: center;
+            font-size: 1.2em;
+            color: #333;
+        }
+
+        img {
+            max-width: 100%;
+            height: auto;
+            margin: 20px;
+        }
+
+        @media (min-width: 600px) {
+            p {
+                font-size: 1.5em;
+            }
+        }
+    </style>
+    <script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>
+    <script>
+        window.onload = function () {
+            
+            const hostname = window.location.hostname;
+            
+            if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+                const configUrl = new URL('BitchuteConfig.json', window.location.href).href;
+
+                let qr = qrcode(0, 'L');
+                qr.addData(configUrl);
+                qr.make();
+
+                let qrImgTag = qr.createImgTag(6, 8, "qr code of " + configUrl);
+
+                let tempDiv = document.createElement('div');
+                tempDiv.innerHTML = qrImgTag;
+
+                let qrImg = tempDiv.querySelector('img');
+                const title = 'QR code of the plugin configuration';
+                qrImg.alt = title;
+                qrImg.title = title;
+
+                let qrCodeContainer = document.getElementById('qrCodeContainer');
+                if (qrCodeContainer) {
+                    qrCodeContainer.appendChild(qrImg);
+                } else {
+                    console.error('QR code container not found');
+                }
+
+                document.getElementById('qr-code-text').style.display = 'inline';
+
+                const isSupported = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+                if (isSupported) {
+                    setTimeout(function () {
+                        window.location.href = `grayjay://plugin/${configUrl}`;
+                    }, 1000); // Redirect after 1 seconds to allow the QR code to be seen
+                } else {
+                    console.log("Currently this link is supported on mobile devices only. Use the QR code to install it on Grayjay.");
+                }
+            } else {
+                console.log("QR code is disabled on localhost.");
+                document.getElementById('qr-code-error-text').style.display = 'inline';
+            }
+        }
+    </script>
+</head>
+
+<body>
+    <p>
+        <span>Currently this link is supported on mobile devices only.</span>
+        <span id="qr-code-text" style="display: none;">Use the QR code to install the plugin on Grayjay.</span>
+        <span id="qr-code-error-text" style="display: none;">QR code is disabled on localhost.</span>
+    </p>
+    <div id="qrCodeContainer" class="qr-container"></div>
+    <p>
+        <a href="./BitchuteConfig.json">Plugin Configuration</a>
+    </p>
+</body>
+
+</html>
