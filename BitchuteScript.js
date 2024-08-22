@@ -19,14 +19,19 @@ const URL_API_VIDEO_COMMENTS_AUTH =
   'https://api.bitchute.com/api/beta/apps/commentfreely/video';
 const URL_API_LIVES = 'https://api.bitchute.com/api/beta9/cache/livestreams';
 const URL_WEB_BASE_URL = 'https://www.bitchute.com';
+const URL_WEB_BASE_URL_OLD = 'https://old.bitchute.com';
 const URL_WEB_LOGIN_URL_OLD = 'https://old.bitchute.com/accounts/login/';
 const URL_WEB_BASE_URL_VIDEOS = 'https://www.bitchute.com/video/';
 const URL_WEB_CHANNEL_URL = 'https://www.bitchute.com/channel';
 const URL_WEB_SUBSCRIPTIONS_OLD = 'https://old.bitchute.com/subscriptions/';
+const URL_WEB_PLAYLISTS_OLD = 'https://old.bitchute.com/playlists/';
 
 const HARDCODED_TRUE = true;
 
 const BITCHUTE_VIDEO_URL_REGEX = /bitchute\.com\/video\/([a-zA-Z0-9]+)/;
+
+const BITCHUTE_PLAYLIST_URL_REGEX =
+  /^https:\/\/old\.bitchute\.com\/playlist\/(favorites|watch-later|[a-zA-Z0-9]+)\/?$/;
 
 let config = {};
 
@@ -779,6 +784,148 @@ source.getUserSubscriptions = () => {
   ).map((e) => `${URL_WEB_BASE_URL}${e.getAttribute('href')}`);
 
   return subscriptions;
+};
+
+source.getUserPlaylists = function () {
+  if (!bridge.isLoggedIn()) {
+    log('Failed to retrieve subscriptions page because not logged in.');
+    throw new ScriptException('Not logged in');
+  }
+
+  const response = http.GET(URL_WEB_PLAYLISTS_OLD, {}, HARDCODED_TRUE);
+
+  if (!response.isOk) {
+    throw new ScriptException(`Failed request [${url}] (${response.code})`);
+  }
+
+  if (response.url.startsWith(URL_WEB_LOGIN_URL_OLD)) {
+    throw new LoginRequiredException(
+      'Invalid session. login to import Subscriptions',
+    );
+  }
+
+  const detailsDocument = domParser
+    .parseFromString(response.body, 'text/html')
+    .querySelector('body');
+
+  const playlists = Array.from(
+    detailsDocument.querySelectorAll('#page-detail a.spa[href^="/playlist/"]'),
+  ).map((e) => `${URL_WEB_BASE_URL_OLD}${e.getAttribute('href')}`);
+
+  return playlists;
+};
+
+source.isPlaylistUrl = function (url) {
+  return BITCHUTE_PLAYLIST_URL_REGEX.test(url);
+};
+
+source.getPlaylist = function (url) {
+
+  const isPrivate = url.includes('/playlist/favorites') || url.includes('/playlist/watch-later');
+
+  if (isPrivate && !bridge.isLoggedIn()) {
+    throw new LoginRequiredException('Login to import Subscriptions');
+  }
+  
+  const response = http.GET(url, {}, isPrivate && bridge.isLoggedIn());
+
+  if (!response.isOk) {
+    throw new ScriptException(`Failed request [${url}] (${response.code})`);
+  }
+
+  if (response.url.startsWith(URL_WEB_LOGIN_URL_OLD)) {
+    throw new LoginRequiredException(
+      'Invalid session. login to import Subscriptions',
+    );
+  }
+
+  const detailsDocument = domParser
+    .parseFromString(response.body, 'text/html')
+    .querySelector('body');
+
+  const playlistsTitle =
+    detailsDocument.querySelector('h1#playlist-title')?.text ?? '';
+
+  const playlistAuthorName =
+    detailsDocument.querySelector('p.author a.spa').text;
+
+  const playlistAuthorUrl = detailsDocument
+    .querySelector('p.author a.spa')
+    .getAttribute('href');
+
+  const playlistVideoElements = Array.from(
+    detailsDocument.querySelectorAll('div.playlist-video'),
+  );
+
+  const videos = playlistVideoElements.map((e) => {
+    const videoUrlRelativeUrl = e
+      .querySelector('div.image-container a.spa')
+      .getAttribute('href');
+
+    const videoUrl = `${URL_WEB_BASE_URL}${videoUrlRelativeUrl}`;
+
+    const videoThumbnailUrl = e
+      .querySelector('div.image-container div.image img.img-responsive')
+      .getAttribute('data-src');
+    const videoId = getVideoIdFromUrl(videoUrl);
+
+    const title = e.querySelector('div.title a.spa').text;
+
+    const channelName = e.querySelector('div.channel a.spa').text;
+    const channelRelativeUrl = e
+      .querySelector('div.channel a.spa')
+      .getAttribute('href');
+    const channelUrl = `${URL_WEB_BASE_URL}${channelRelativeUrl}`;
+
+    const durationText = e.querySelector('span.video-duration').text;
+
+    const viewCountEl = e.querySelector('span.video-views').text || '0';
+    const viewCount = parseInt(viewCountEl.replace(/,/g, ''));
+
+    const description = e.querySelector('div.description')?.innerHTML ?? '';
+
+    const duration = convertToSeconds(durationText);
+
+    const video = {
+      id: new PlatformID(
+        PLATFORM,
+        videoId ?? '',
+        config.id,
+        PLATFORM_CLAIMTYPE,
+      ),
+      description: description ?? '',
+      name: title ?? '',
+      thumbnails: new Thumbnails([new Thumbnail(videoThumbnailUrl ?? '', 0)]),
+      author: new PlatformAuthorLink(
+        new PlatformID(PLATFORM, '', config.id, PLATFORM_CLAIMTYPE),
+        channelName,
+        channelUrl,
+      ),
+      uploadDate: 0,
+      datetime: 0,
+      url: videoUrl,
+      duration: duration,
+      viewCount: viewCount,
+      isLive: false,
+    };
+
+    return new PlatformVideo(video);
+
+  });
+
+  return new PlatformPlaylistDetails({
+    url: url,
+    id: new PlatformID(PLATFORM, '', config.id, PLATFORM_CLAIMTYPE),
+    author: new PlatformAuthorLink(
+      new PlatformID(PLATFORM, '', config.id, PLATFORM_CLAIMTYPE),
+      playlistAuthorName,
+      playlistAuthorUrl,
+    ),
+    name: playlistsTitle,
+    thumbnail: '',
+    videoCount: videos.length ?? 0,
+    contents: new VideoPager(videos),
+  });
 };
 
 log('LOADED');
