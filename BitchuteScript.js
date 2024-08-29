@@ -28,12 +28,17 @@ const URL_WEB_PLAYLISTS_OLD = 'https://old.bitchute.com/playlists/';
 
 const HARDCODED_TRUE = true;
 const HARDCODED_FALSE = false;
+const HARDCODED_EMPTY = '';
+const HARDCODED_ZERO = 0;
 
 const BITCHUTE_VIDEO_URL_REGEX = /bitchute\.com\/video\/([a-zA-Z0-9]+)/;
 
 const BITCHUTE_PLAYLIST_URL_REGEX =
   /^https:\/\/old\.bitchute\.com\/playlist\/(favorites|watch-later|[a-zA-Z0-9]+)\/?$/;
 
+const REQUEST_HEADERS = {
+  'Content-Type': 'application/json',
+};
 
 let config = {};
 
@@ -73,7 +78,7 @@ source.saveState = () => {
 
 source.getHome = function () {
   class RecommendedVideoPager extends VideoPager {
-    constructor({ videos = [], hasMore = true, context = { offset: 0 } } = {}) {
+    constructor({ videos = [], hasMore = HARDCODED_TRUE, context = { offset: HARDCODED_ZERO } } = {}) {
       super(videos, hasMore, context);
     }
 
@@ -82,29 +87,25 @@ source.getHome = function () {
         selection: 'suggested',
         offset: this.context.offset,
         limit: 20,
-        advertisable: true,
+        advertisable: HARDCODED_TRUE,
       };
 
       const batchArray = [
         {
           url: URL_API_RECOMMENDED_VIDEOS_FEED,
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: REQUEST_HEADERS,
           body: JSON.stringify(body),
         },
       ];
 
-      const isFirstPage = this.context.offset == 0;
+      const isFirstPage = this.context.offset == HARDCODED_ZERO;
 
       if (isFirstPage) {
         batchArray.push({
           url: URL_API_LIVES,
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: REQUEST_HEADERS,
           body: JSON.stringify({}),
         });
       }
@@ -137,7 +138,7 @@ source.getHome = function () {
 
       return new RecommendedVideoPager({
         videos: platformVideos,
-        hasMore: platformVideos.length > 0,
+        hasMore: platformVideos.length > HARDCODED_ZERO,
         context: { offset: this.context.offset + 20 },
       });
     }
@@ -156,14 +157,11 @@ source.getSearchCapabilities = () => {
 
 source.search = function (query) {
   class SearchVideoPager extends VideoPager {
-    constructor({ videos = [], hasMore = true, context = {} } = {}) {
+    constructor({ videos = [], hasMore = HARDCODED_TRUE, context = {} } = {}) {
       super(videos, hasMore, context);
     }
 
     nextPage() {
-      const headers = {
-        'Content-Type': 'application/json',
-      };
       const body = {
         offset: this.context.offset,
         limit: 50,
@@ -174,8 +172,8 @@ source.search = function (query) {
       const res = http.POST(
         URL_API_SEARCH_VIDEOS,
         JSON.stringify(body),
-        headers,
-        false,
+        REQUEST_HEADERS,
+        HARDCODED_FALSE,
       );
 
       if (!res.isOk) {
@@ -192,7 +190,7 @@ source.search = function (query) {
 
       return new SearchVideoPager({
         videos: platformVideos,
-        hasMore: platformVideos.length > 0,
+        hasMore: platformVideos.length > HARDCODED_ZERO,
         context: { offset: this.context.offset + 50 },
       });
     }
@@ -211,14 +209,11 @@ source.getSearchChannelContentsCapabilities = function () {
 
 source.searchChannels = function (query) {
   class SearchChannelsPager extends VideoPager {
-    constructor({ videos = [], hasMore = true, context = {} } = {}) {
+    constructor({ videos = [], hasMore = HARDCODED_TRUE, context = {} } = {}) {
       super(videos, hasMore, context);
     }
 
     nextPage() {
-      const headers = {
-        'Content-Type': 'application/json',
-      };
 
       const body = {
         offset: this.context.offset,
@@ -230,8 +225,8 @@ source.searchChannels = function (query) {
       const res = http.POST(
         URL_API_SEARCH_CHANNELS,
         JSON.stringify(body),
-        headers,
-        false,
+        REQUEST_HEADERS,
+        HARDCODED_FALSE,
       );
 
       if (!res.isOk) {
@@ -248,13 +243,13 @@ source.searchChannels = function (query) {
         return new PlatformChannel({
           id: new PlatformID(
             PLATFORM,
-            sourceChannel?.channel_id ?? '',
+            sourceChannel?.channel_id ?? HARDCODED_EMPTY,
             config.id,
             PLATFORM_CLAIMTYPE,
           ),
-          name: sourceChannel?.channel_name ?? '',
-          thumbnail: sourceChannel?.thumbnail_url ?? '',
-          banner: '',
+          name: sourceChannel?.channel_name ?? HARDCODED_EMPTY,
+          thumbnail: sourceChannel?.thumbnail_url ?? HARDCODED_EMPTY,
+          banner: HARDCODED_EMPTY,
           subscribers: sourceChannel.subscriber_count,
           description: sourceChannel.description,
           url: `${URL_WEB_BASE_URL}${sourceChannel.channel_url}`,
@@ -263,7 +258,7 @@ source.searchChannels = function (query) {
 
       return new SearchChannelsPager({
         videos: channels,
-        hasMore: channels.length > 0,
+        hasMore: channels.length > HARDCODED_ZERO,
         context: { offset: this.context.offset + 50 },
       });
     }
@@ -279,12 +274,9 @@ source.isChannelUrl = function (url) {
 };
 
 function getChannelInfo(channelId) {
-  const headers = {
-    'Content-Type': 'application/json',
-  };
 
   const body = JSON.stringify({ channel_id: channelId });
-  const response = http.POST(URL_API_CHANNEL, body, headers, false);
+  const response = http.POST(URL_API_CHANNEL, body, REQUEST_HEADERS, HARDCODED_FALSE);
 
   if (!response.isOk) {
     throw new ScriptException(`Failed request [${url}] (${response.code})`);
@@ -296,12 +288,9 @@ function getChannelInfo(channelId) {
 }
 
 function getChannelLinksByProfileId(profileId) {
-  const headers = {
-    'Content-Type': 'application/json',
-  };
 
-  const body = JSON.stringify({ profile_id: profileId, offset: 0, limit: 10 });
-  const res = http.POST(URL_API_LINKS, body, headers, false);
+  const body = JSON.stringify({ profile_id: profileId, offset: HARDCODED_ZERO, limit: 10 });
+  const res = http.POST(URL_API_LINKS, body, REQUEST_HEADERS, HARDCODED_FALSE);
 
   if (!res.isOk) {
     throw new ScriptException(`Failed request [${url}] (${res.code})`);
@@ -333,13 +322,13 @@ source.getChannel = function (url) {
     state.channel[url] = new PlatformChannel({
     id: new PlatformID(
       PLATFORM,
-      sourceChannel?.channel_id ?? '',
+      sourceChannel?.channel_id ?? HARDCODED_EMPTY,
       config.id,
       PLATFORM_CLAIMTYPE,
     ),
-    name: sourceChannel?.channel_name ?? '',
-    thumbnail: sourceChannel?.thumbnail_url ?? '',
-    banner: '',
+    name: sourceChannel?.channel_name ?? HARDCODED_EMPTY,
+    thumbnail: sourceChannel?.thumbnail_url ?? HARDCODED_EMPTY,
+    banner: HARDCODED_EMPTY,
     subscribers: sourceChannel.subscriber_count,
     description: sourceChannel.description,
     url: `${URL_WEB_BASE_URL}${sourceChannel.channel_url}`,
@@ -355,7 +344,7 @@ source.getChannelContents = function (url) {
   const sourceChannel = getChannelInfo(channelId);
 
   class ChannelContentsVideoPager extends VideoPager {
-    constructor({ videos = [], hasMore = true, context = { offset: 0 } } = {}) {
+    constructor({ videos = [], hasMore = HARDCODED_TRUE, context = { offset: HARDCODED_ZERO } } = {}) {
       super(videos, hasMore, context);
     }
 
@@ -364,9 +353,6 @@ source.getChannelContents = function (url) {
       if(state.channelContent[`${channelId}:${this.context.offset}`]) {
         return state.channelContent[`${channelId}:${this.context.offset}`];
       }
-      const headers = {
-        'Content-Type': 'application/json',
-      };
 
       const body = {
         channel_id: channelId,
@@ -376,8 +362,8 @@ source.getChannelContents = function (url) {
       const res = http.POST(
         URL_API_CHANNEL_VIDEOS,
         JSON.stringify(body),
-        headers,
-        false,
+        REQUEST_HEADERS,
+        HARDCODED_FALSE,
       );
 
       if (!res.isOk) {
@@ -400,7 +386,7 @@ source.getChannelContents = function (url) {
 
         state.channelContent[`${channelId}:${this.context.offset}`] = new ChannelContentsVideoPager({
         videos: platformVideos,
-        hasMore: platformVideos.length > 0,
+        hasMore: platformVideos.length > HARDCODED_ZERO,
         context: { offset: this.context.offset + 20 },
       });
 
@@ -429,25 +415,19 @@ source.getContentDetails = function (url) {
     {
       url: URL_API_MEDIA_INFO,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: REQUEST_HEADERS,
       body: body,
     },
     {
       url: URL_API_VIDEO_INFO,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: REQUEST_HEADERS,
       body: body,
     },
     {
       url: URL_API_VIDEO_AGREGATES_COUNTS,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: REQUEST_HEADERS,
       body: body,
     },
     {
@@ -501,7 +481,7 @@ source.getContentDetails = function (url) {
         name: 'HLS',
         url: media_url,
         duration: duration,
-        priority: true,
+        priority: HARDCODED_TRUE,
       }),
     );
   } else if (media_url.includes('mp4')) {
@@ -542,7 +522,7 @@ source.getContentDetails = function (url) {
     duration: duration,
     thumbnails:
       videoDetails.thumbnail_url &&
-      new Thumbnails([new Thumbnail(videoDetails.thumbnail_url, 0)]),
+      new Thumbnails([new Thumbnail(videoDetails.thumbnail_url, HARDCODED_ZERO)]),
     viewCount: countDetails.view_count,
   });
 };
@@ -577,7 +557,7 @@ source.getComments = function (url) {
     .filter((c) => !c.parent)
     .map((comment) => ToComment(url, comment, allComments));
 
-  return new CommentPager(results, false);
+  return new CommentPager(results, HARDCODED_FALSE);
 };
 
 class BitchuteComment extends Comment {
@@ -594,7 +574,7 @@ class BitchuteComment extends Comment {
 class BitchuteCommentPager extends CommentPager {
   constructor(allResults, pageSize) {
     const end = Math.min(pageSize, allResults.length);
-    const results = allResults.slice(0, end);
+    const results = allResults.slice(HARDCODED_ZERO, end);
     const hasMore = pageSize < allResults.length;
     super(results, hasMore, {});
 
@@ -615,14 +595,14 @@ class BitchuteCommentPager extends CommentPager {
 function ToComment(url, c, allComments) {
   const replies = allComments.filter((z) => z.parent === c.id);
 
-  const replyCount = replies?.length ?? 0;
+  const replyCount = replies?.length ?? HARDCODED_ZERO;
 
   return new BitchuteComment({
     contextUrl: url,
     author: new PlatformAuthorLink(
-      new PlatformID(PLATFORM, c.creator ?? '', config.id),
-      c.fullname ?? '',
-      '',
+      new PlatformID(PLATFORM, c.creator ?? HARDCODED_EMPTY, config.id),
+      c.fullname ?? HARDCODED_EMPTY,
+      HARDCODED_EMPTY,
       c.profile_picture_url,
     ),
     message: c.content,
@@ -657,7 +637,7 @@ function convertToObjects(names, values) {
 
 function convertToSeconds(time) {
   if (!time || time.indexOf(':') === -1) {
-    return 0;
+    return HARDCODED_ZERO;
   }
 
   // Split the time string by the colon
@@ -708,7 +688,7 @@ function batchRequest(requests) {
         request.method || 'GET',
         request.url,
         request.headers || {},
-        request.auth || false,
+        request.auth || HARDCODED_FALSE,
       );
     } else {
       batch = batch.requestWithBody(
@@ -716,7 +696,7 @@ function batchRequest(requests) {
         request.url,
         request.body,
         request.headers || {},
-        request.auth || false,
+        request.auth || HARDCODED_FALSE,
       );
     }
   }
@@ -733,7 +713,7 @@ function BitchuteVideoToPlatformVideo(v) {
       new PlatformID(PLATFORM, v.video_id, config.id, PLATFORM_CLAIMTYPE),
     name: v.video_name,
     thumbnails:
-      v.thumbnail_url && new Thumbnails([new Thumbnail(v.thumbnail_url, 0)]),
+      v.thumbnail_url && new Thumbnails([new Thumbnail(v.thumbnail_url, HARDCODED_ZERO)]),
     duration: convertToSeconds(v.duration),
     viewCount: v.view_count,
     url: videoUrl,
@@ -786,11 +766,7 @@ function objectToUrlEncodedString(obj) {
 function getCommentAuthForVideo(videoId) {
   const body = JSON.stringify({ video_id: videoId });
 
-  const headers = {
-    'Content-Type': 'application/json',
-  };
-
-  const res = http.POST(URL_API_VIDEO_COMMENTS_AUTH, body, headers, false);
+  const res = http.POST(URL_API_VIDEO_COMMENTS_AUTH, body, REQUEST_HEADERS, HARDCODED_FALSE);
 
   if (!res.isOk) {
     throw new ScriptException(`Failed request [${url}] (${res.code})`);
@@ -886,7 +862,7 @@ source.getPlaylist = function (url) {
     .querySelector('body');
 
   const playlistsTitle =
-    detailsDocument.querySelector('h1#playlist-title')?.text ?? '';
+    detailsDocument.querySelector('h1#playlist-title')?.text ?? HARDCODED_EMPTY;
 
   const playlistAuthorName =
     detailsDocument.querySelector('p.author a.spa').text;
@@ -922,33 +898,33 @@ source.getPlaylist = function (url) {
     const durationText = e.querySelector('span.video-duration').text;
 
     const viewCountEl = e.querySelector('span.video-views').text || '0';
-    const viewCount = parseInt(viewCountEl.replace(/,/g, ''));
+    const viewCount = parseInt(viewCountEl.replace(/,/g, HARDCODED_EMPTY));
 
-    const description = e.querySelector('div.description')?.innerHTML ?? '';
+    const description = e.querySelector('div.description')?.innerHTML ?? HARDCODED_EMPTY;
 
     const duration = convertToSeconds(durationText);
 
     const video = {
       id: new PlatformID(
         PLATFORM,
-        videoId ?? '',
+        videoId ?? HARDCODED_EMPTY,
         config.id,
         PLATFORM_CLAIMTYPE,
       ),
-      description: description ?? '',
-      name: title ?? '',
-      thumbnails: new Thumbnails([new Thumbnail(videoThumbnailUrl ?? '', 0)]),
+      description: description ?? HARDCODED_EMPTY,
+      name: title ?? HARDCODED_EMPTY,
+      thumbnails: new Thumbnails([new Thumbnail(videoThumbnailUrl ?? HARDCODED_EMPTY, HARDCODED_ZERO)]),
       author: new PlatformAuthorLink(
-        new PlatformID(PLATFORM, '', config.id, PLATFORM_CLAIMTYPE),
+        new PlatformID(PLATFORM, HARDCODED_EMPTY, config.id, PLATFORM_CLAIMTYPE),
         channelName,
         channelUrl,
       ),
-      uploadDate: 0,
-      datetime: 0,
+      uploadDate: HARDCODED_ZERO,
+      datetime: HARDCODED_ZERO,
       url: videoUrl,
       duration: duration,
       viewCount: viewCount,
-      isLive: false,
+      isLive: HARDCODED_FALSE,
     };
 
     return new PlatformVideo(video);
@@ -957,15 +933,15 @@ source.getPlaylist = function (url) {
 
   return new PlatformPlaylistDetails({
     url: url,
-    id: new PlatformID(PLATFORM, '', config.id, PLATFORM_CLAIMTYPE),
+    id: new PlatformID(PLATFORM, HARDCODED_EMPTY, config.id, PLATFORM_CLAIMTYPE),
     author: new PlatformAuthorLink(
-      new PlatformID(PLATFORM, '', config.id, PLATFORM_CLAIMTYPE),
+      new PlatformID(PLATFORM, HARDCODED_EMPTY, config.id, PLATFORM_CLAIMTYPE),
       playlistAuthorName,
       playlistAuthorUrl,
     ),
     name: playlistsTitle,
-    thumbnail: '',
-    videoCount: videos.length ?? 0,
+    thumbnail: HARDCODED_EMPTY,
+    videoCount: videos.length ?? HARDCODED_ZERO,
     contents: new VideoPager(videos),
   });
 };
