@@ -27,17 +27,48 @@ const URL_WEB_SUBSCRIPTIONS_OLD = 'https://old.bitchute.com/subscriptions/';
 const URL_WEB_PLAYLISTS_OLD = 'https://old.bitchute.com/playlists/';
 
 const HARDCODED_TRUE = true;
+const HARDCODED_FALSE = false;
 
 const BITCHUTE_VIDEO_URL_REGEX = /bitchute\.com\/video\/([a-zA-Z0-9]+)/;
 
 const BITCHUTE_PLAYLIST_URL_REGEX =
   /^https:\/\/old\.bitchute\.com\/playlist\/(favorites|watch-later|[a-zA-Z0-9]+)\/?$/;
 
+
 let config = {};
 
+const state = {
+  channel: {},
+  channelContent: {},
+}
+
 //Source Methods
-source.enable = function (conf, settings, savedState) {
+source.enable = function (conf, settings, saveStateStr) {
   config = conf ?? {};
+
+  let didSaveState = HARDCODED_FALSE;
+
+  try {
+    if (saveStateStr) {
+      const saveState = JSON.parse(saveStateStr);
+      if (saveState) {
+        Object.keys(state).forEach((key) => {
+          state[key] = saveState[key];
+        });
+      }
+    }
+  } catch (ex) {
+    log('Failed to parse saveState:' + ex);
+  }
+
+  if (!didSaveState) {
+    // init state
+  }
+};
+
+source.saveState = () => {
+  //no caching while testing
+  return IS_TESTING ? JSON.stringify({}) : JSON.stringify(state);
 };
 
 source.getHome = function () {
@@ -280,6 +311,11 @@ function getChannelLinksByProfileId(profileId) {
 }
 
 source.getChannel = function (url) {
+
+  if(state.channel[url]){
+    return state.channel[url];
+  }
+
   const channelId = extractChannelId(url);
 
   const sourceChannel = getChannelInfo(channelId);
@@ -294,7 +330,7 @@ source.getChannel = function (url) {
       links[l.social_media_name] = l.url;
     });
 
-  return new PlatformChannel({
+    state.channel[url] = new PlatformChannel({
     id: new PlatformID(
       PLATFORM,
       sourceChannel?.channel_id ?? '',
@@ -309,6 +345,8 @@ source.getChannel = function (url) {
     url: `${URL_WEB_BASE_URL}${sourceChannel.channel_url}`,
     links,
   });
+
+  return state.channel[url];
 };
 
 source.getChannelContents = function (url) {
@@ -322,6 +360,10 @@ source.getChannelContents = function (url) {
     }
 
     nextPage() {
+
+      if(state.channelContent[`${channelId}:${this.context.offset}`]) {
+        return state.channelContent[`${channelId}:${this.context.offset}`];
+      }
       const headers = {
         'Content-Type': 'application/json',
       };
@@ -344,9 +386,7 @@ source.getChannelContents = function (url) {
         );
       }
 
-      const nicoVideos = JSON.parse(res.body).videos;
-
-      const platformVideos = nicoVideos
+      const platformVideos = JSON.parse(res.body).videos
         .map((v) => {
           v.channel = {
             channel_id: sourceChannel.channel_id,
@@ -358,11 +398,13 @@ source.getChannelContents = function (url) {
         })
         .map(BitchuteVideoToPlatformVideo);
 
-      return new ChannelContentsVideoPager({
+        state.channelContent[`${channelId}:${this.context.offset}`] = new ChannelContentsVideoPager({
         videos: platformVideos,
         hasMore: platformVideos.length > 0,
         context: { offset: this.context.offset + 20 },
       });
+
+      return state.channelContent[`${channelId}:${this.context.offset}`];
     }
   }
 
