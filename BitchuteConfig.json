@@ -7,7 +7,7 @@
   "sourceUrl": "https://plugins.grayjay.app/Bitchute/BitchuteConfig.json",
   "scriptUrl": "./BitchuteScript.js",
   "repositoryUrl": "https://futo.org",
-  "version": 1,
+  "version": 2,
   "iconUrl": "./BitchuteIcon.png",
   "id": "e8b1ad5f-0c6d-497d-a5fa-0a785a16d902",
   "scriptSignature": "",
@@ -29,5 +29,53 @@
       "sessionid"
     ],
     "userAgent": "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
-  }
+  },
+  "settings": [
+    {
+      "variable": "contentSensitivityIndex",
+      "name": "Content Sensitivity",
+      "description": "Set the content sensitivity level.",
+      "type": "Dropdown",
+      "default": "1",
+      "options": [
+        "Safe - (BBFC U)",
+        "Normal - (BBFC 12)",
+        "NSFW - Not Suitable For Work (BBFC 15)",
+        "NSFL - Not Suitable For Life (BBFC 18)"
+      ]
+    },
+    {
+      "variable": "showLiveVideosOnHome",
+      "name": "Show Live Videos on Home",
+      "description": "Show live videos on the home page (may include recently finished lives).",
+      "type": "Boolean",
+      "default": "false"
+    },
+    {
+      "variable": "cacheChannelContent",
+      "name": "Cache Channel Content",
+      "description": "Cache channel content for faster loading.",
+      "type": "Boolean",
+      "default": "true"
+    },
+    {
+      "variable": "cacheChannelContentTimeToLiveIndex",
+      "name": "Cache Channel Content TTL",
+      "description": "Time to live for cached channel content (in minutes).",
+      "type": "Dropdown",
+      "default": "4",
+      "options": [
+        "1",
+        "2",
+        "3",
+        "5",
+        "10",
+        "15",
+        "20",
+        "30",
+        "60",
+        "120"
+      ]
+    }
+  ]
 }

@@ -27,22 +27,84 @@ const URL_WEB_SUBSCRIPTIONS_OLD = 'https://old.bitchute.com/subscriptions/';
 const URL_WEB_PLAYLISTS_OLD = 'https://old.bitchute.com/playlists/';
 
 const HARDCODED_TRUE = true;
+const HARDCODED_FALSE = false;
+const HARDCODED_EMPTY = '';
+const HARDCODED_ZERO = 0;
 
 const BITCHUTE_VIDEO_URL_REGEX = /bitchute\.com\/video\/([a-zA-Z0-9]+)/;
 
 const BITCHUTE_PLAYLIST_URL_REGEX =
   /^https:\/\/old\.bitchute\.com\/playlist\/(favorites|watch-later|[a-zA-Z0-9]+)\/?$/;
 
-let config = {};
+const REQUEST_HEADERS = {
+  'Content-Type': 'application/json',
+};
+
+let _config = {};
+let _settings = {};
+
+const state = {
+  channel: {},
+  channelMeta: {},
+  channelContent: {},
+  channelContentTimeToLive: {}
+}
+
+if (IS_TESTING) {
+  _settings.showLiveVideosOnHome = HARDCODED_FALSE;
+  _settings.cacheChannelContent = HARDCODED_TRUE;
+  _settings.cacheChannelContentTimeToLiveIndex = 5; // 10 minutes
+  _settings.contentSensitivityIndex = 1; // Normal
+}
+
+let CHANNEL_CONTENT_TTL_OPTIONS = [];
+let CONTENT_SENSITIVITY_OPTIONS = [];
 
 //Source Methods
-source.enable = function (conf, settings, savedState) {
-  config = conf ?? {};
+source.enable = function (conf, settings, saveStateStr) {
+  _config = conf ?? {};
+  _settings = settings ?? {};
+
+  CHANNEL_CONTENT_TTL_OPTIONS =
+  _config?.settings
+            ?.find((s) => s.variable == 'cacheChannelContentTimeToLiveIndex')
+            ?.options?.map((s) => parseInt(s)) ?? [];
+            
+  CONTENT_SENSITIVITY_OPTIONS =
+  _config?.settings
+            ?.find((s) => s.variable == 'contentSensitivityIndex')
+            ?.options?.map((s) => {
+              return s.split('-')?.[0]?.trim()?.toLowerCase();
+            }) ?? [];
+
+  let didSaveState = HARDCODED_FALSE;
+
+  try {
+    if (saveStateStr) {
+      const saveState = JSON.parse(saveStateStr);
+      if (saveState) {
+        Object.keys(state).forEach((key) => {
+          state[key] = saveState[key];
+        });
+      }
+    }
+  } catch (ex) {
+    log('Failed to parse saveState:' + ex);
+  }
+
+  if (!didSaveState) {
+    // init state
+  }
+};
+
+source.saveState = () => {
+  //no caching while testing
+  return IS_TESTING ? JSON.stringify({}) : JSON.stringify(state);
 };
 
 source.getHome = function () {
   class RecommendedVideoPager extends VideoPager {
-    constructor({ videos = [], hasMore = true, context = { offset: 0 } } = {}) {
+    constructor({ videos = [], hasMore = HARDCODED_TRUE, context = { offset: HARDCODED_ZERO } } = {}) {
       super(videos, hasMore, context);
     }
 
@@ -51,32 +113,33 @@ source.getHome = function () {
         selection: 'suggested',
         offset: this.context.offset,
         limit: 20,
-        advertisable: true,
+        advertisable: HARDCODED_TRUE,
+        sensitivity_id: CONTENT_SENSITIVITY_OPTIONS[_settings.contentSensitivityIndex],
       };
 
       const batchArray = [
         {
           url: URL_API_RECOMMENDED_VIDEOS_FEED,
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: REQUEST_HEADERS,
           body: JSON.stringify(body),
         },
       ];
 
-      const isFirstPage = this.context.offset == 0;
+      const isFirstPage = this.context.offset == HARDCODED_ZERO;
 
-      if (isFirstPage) {
+      const shouldIncludeLive = _settings.showLiveVideosOnHome && isFirstPage;
+
+      if (shouldIncludeLive) {
         batchArray.push({
           url: URL_API_LIVES,
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: REQUEST_HEADERS,
           body: JSON.stringify({}),
         });
       }
+
+      const allVideos = [];
 
       const [videoResponse, liveResponse] = batchRequest(batchArray);
 
@@ -86,15 +149,13 @@ source.getHome = function () {
         );
       }
 
-      if (isFirstPage && !liveResponse.isOk) {
-        throw new ScriptException(
-          `Failed request [${URL_API_LIVES}] (${liveResponse.code})`,
-        );
-      }
+      if(shouldIncludeLive) {
+        if (!liveResponse.isOk) {
+          throw new ScriptException(
+            `Failed request [${URL_API_LIVES}] (${liveResponse.code})`,
+          );
+        }
 
-      const allVideos = [];
-
-      if (isFirstPage) {
         const recomendedLives = JSON.parse(liveResponse.body).videos;
         allVideos.push(...recomendedLives);
       }
@@ -106,7 +167,7 @@ source.getHome = function () {
 
       return new RecommendedVideoPager({
         videos: platformVideos,
-        hasMore: platformVideos.length > 0,
+        hasMore: platformVideos.length > HARDCODED_ZERO,
         context: { offset: this.context.offset + 20 },
       });
     }
@@ -125,26 +186,23 @@ source.getSearchCapabilities = () => {
 
 source.search = function (query) {
   class SearchVideoPager extends VideoPager {
-    constructor({ videos = [], hasMore = true, context = {} } = {}) {
+    constructor({ videos = [], hasMore = HARDCODED_TRUE, context = {} } = {}) {
       super(videos, hasMore, context);
     }
 
     nextPage() {
-      const headers = {
-        'Content-Type': 'application/json',
-      };
       const body = {
         offset: this.context.offset,
         limit: 50,
         query: query,
-        sensitivity_id: 'normal',
+        sensitivity_id: CONTENT_SENSITIVITY_OPTIONS[_settings.contentSensitivityIndex],
         sort: 'new',
       };
       const res = http.POST(
         URL_API_SEARCH_VIDEOS,
         JSON.stringify(body),
-        headers,
-        false,
+        REQUEST_HEADERS,
+        HARDCODED_FALSE,
       );
 
       if (!res.isOk) {
@@ -161,7 +219,7 @@ source.search = function (query) {
 
       return new SearchVideoPager({
         videos: platformVideos,
-        hasMore: platformVideos.length > 0,
+        hasMore: platformVideos.length > HARDCODED_ZERO,
         context: { offset: this.context.offset + 50 },
       });
     }
@@ -180,27 +238,24 @@ source.getSearchChannelContentsCapabilities = function () {
 
 source.searchChannels = function (query) {
   class SearchChannelsPager extends VideoPager {
-    constructor({ videos = [], hasMore = true, context = {} } = {}) {
+    constructor({ videos = [], hasMore = HARDCODED_TRUE, context = {} } = {}) {
       super(videos, hasMore, context);
     }
 
     nextPage() {
-      const headers = {
-        'Content-Type': 'application/json',
-      };
 
       const body = {
         offset: this.context.offset,
         limit: 50,
         query: query,
-        sensitivity_id: 'normal',
+        sensitivity_id: CONTENT_SENSITIVITY_OPTIONS[_settings.contentSensitivityIndex],
         sort: 'new',
       };
       const res = http.POST(
         URL_API_SEARCH_CHANNELS,
         JSON.stringify(body),
-        headers,
-        false,
+        REQUEST_HEADERS,
+        HARDCODED_FALSE,
       );
 
       if (!res.isOk) {
@@ -217,13 +272,13 @@ source.searchChannels = function (query) {
         return new PlatformChannel({
           id: new PlatformID(
             PLATFORM,
-            sourceChannel?.channel_id ?? '',
-            config.id,
+            sourceChannel?.channel_id ?? HARDCODED_EMPTY,
+            _config.id,
             PLATFORM_CLAIMTYPE,
           ),
-          name: sourceChannel?.channel_name ?? '',
-          thumbnail: sourceChannel?.thumbnail_url ?? '',
-          banner: '',
+          name: sourceChannel?.channel_name ?? HARDCODED_EMPTY,
+          thumbnail: sourceChannel?.thumbnail_url ?? HARDCODED_EMPTY,
+          banner: HARDCODED_EMPTY,
           subscribers: sourceChannel.subscriber_count,
           description: sourceChannel.description,
           url: `${URL_WEB_BASE_URL}${sourceChannel.channel_url}`,
@@ -232,7 +287,7 @@ source.searchChannels = function (query) {
 
       return new SearchChannelsPager({
         videos: channels,
-        hasMore: channels.length > 0,
+        hasMore: channels.length > HARDCODED_ZERO,
         context: { offset: this.context.offset + 50 },
       });
     }
@@ -247,30 +302,29 @@ source.isChannelUrl = function (url) {
   return isChannelUrl;
 };
 
-function getChannelInfo(channelId) {
-  const headers = {
-    'Content-Type': 'application/json',
-  };
+function getChannelMeta(channelId) {
 
+  if(state.channelMeta[channelId]){
+    return state.channelMeta[channelId];
+  }
+
+debugger;
   const body = JSON.stringify({ channel_id: channelId });
-  const response = http.POST(URL_API_CHANNEL, body, headers, false);
+  const response = http.POST(URL_API_CHANNEL, body, REQUEST_HEADERS, HARDCODED_FALSE);
 
   if (!response.isOk) {
     throw new ScriptException(`Failed request [${url}] (${response.code})`);
   }
 
-  const sourceChannel = JSON.parse(response.body);
+  state.channelMeta[channelId] = JSON.parse(response.body);
 
-  return sourceChannel;
+  return state.channelMeta[channelId];
 }
 
 function getChannelLinksByProfileId(profileId) {
-  const headers = {
-    'Content-Type': 'application/json',
-  };
 
-  const body = JSON.stringify({ profile_id: profileId, offset: 0, limit: 10 });
-  const res = http.POST(URL_API_LINKS, body, headers, false);
+  const body = JSON.stringify({ profile_id: profileId, offset: HARDCODED_ZERO, limit: 10 });
+  const res = http.POST(URL_API_LINKS, body, REQUEST_HEADERS, HARDCODED_FALSE);
 
   if (!res.isOk) {
     throw new ScriptException(`Failed request [${url}] (${res.code})`);
@@ -280,11 +334,16 @@ function getChannelLinksByProfileId(profileId) {
 }
 
 source.getChannel = function (url) {
+
+  if(state.channel[url]){
+    return state.channel[url];
+  }
+
   const channelId = extractChannelId(url);
 
-  const sourceChannel = getChannelInfo(channelId);
+  const channelMeta = getChannelMeta(channelId);
 
-  const linksData = getChannelLinksByProfileId(sourceChannel.profile_id);
+  const linksData = getChannelLinksByProfileId(channelMeta.profile_id);
 
   const links = {};
 
@@ -294,38 +353,45 @@ source.getChannel = function (url) {
       links[l.social_media_name] = l.url;
     });
 
-  return new PlatformChannel({
+    state.channel[url] = new PlatformChannel({
     id: new PlatformID(
       PLATFORM,
-      sourceChannel?.channel_id ?? '',
-      config.id,
+      channelMeta?.channel_id ?? HARDCODED_EMPTY,
+      _config.id,
       PLATFORM_CLAIMTYPE,
     ),
-    name: sourceChannel?.channel_name ?? '',
-    thumbnail: sourceChannel?.thumbnail_url ?? '',
-    banner: '',
-    subscribers: sourceChannel.subscriber_count,
-    description: sourceChannel.description,
-    url: `${URL_WEB_BASE_URL}${sourceChannel.channel_url}`,
+    name: channelMeta?.channel_name ?? HARDCODED_EMPTY,
+    thumbnail: channelMeta?.thumbnail_url ?? HARDCODED_EMPTY,
+    banner: HARDCODED_EMPTY,
+    subscribers: channelMeta.subscriber_count,
+    description: channelMeta.description,
+    url: `${URL_WEB_BASE_URL}${channelMeta.channel_url}`,
     links,
   });
+
+  return state.channel[url];
 };
 
 source.getChannelContents = function (url) {
+  
   const channelId = extractChannelId(url);
 
-  const sourceChannel = getChannelInfo(channelId);
-
   class ChannelContentsVideoPager extends VideoPager {
-    constructor({ videos = [], hasMore = true, context = { offset: 0 } } = {}) {
+    constructor({ videos = [], hasMore = HARDCODED_TRUE, context = { offset: HARDCODED_ZERO } } = {}) {
       super(videos, hasMore, context);
     }
 
     nextPage() {
-      const headers = {
-        'Content-Type': 'application/json',
-      };
+      const cacheKey = `${channelId}:${this.context.offset}`;
+      const cachedData = state.channelContent[cacheKey];
+      const cachedTTL = state.channelContentTimeToLive[cacheKey];
 
+      // Check if cache exists and is still valid
+      if (_settings.cacheChannelContent && cachedData && cachedTTL && Date.now() < cachedTTL) {
+        return cachedData;
+      }
+
+      // Cache is either expired or does not exist, so we fetch new data
       const body = {
         channel_id: channelId,
         offset: this.context.offset,
@@ -334,19 +400,19 @@ source.getChannelContents = function (url) {
       const res = http.POST(
         URL_API_CHANNEL_VIDEOS,
         JSON.stringify(body),
-        headers,
-        false,
+        REQUEST_HEADERS,
+        HARDCODED_FALSE,
       );
 
       if (!res.isOk) {
         throw new ScriptException(
-          `Failed request [${URL_API_RECOMMENDED_VIDEOS_FEED}] (${res.code})`,
+          `Failed request [${URL_API_CHANNEL_VIDEOS}] (${res.code})`,
         );
       }
 
-      const nicoVideos = JSON.parse(res.body).videos;
+      const sourceChannel = getChannelMeta(channelId);
 
-      const platformVideos = nicoVideos
+      const platformVideos = JSON.parse(res.body).videos
         .map((v) => {
           v.channel = {
             channel_id: sourceChannel.channel_id,
@@ -358,11 +424,18 @@ source.getChannelContents = function (url) {
         })
         .map(BitchuteVideoToPlatformVideo);
 
-      return new ChannelContentsVideoPager({
+      // Update the cache with new data and TTL
+      state.channelContent[cacheKey] = new ChannelContentsVideoPager({
         videos: platformVideos,
-        hasMore: platformVideos.length > 0,
-        context: { offset: this.context.offset + 20 },
+        hasMore: platformVideos.length > HARDCODED_ZERO,
+        context: { offset: this.context.offset + 10 }, // Offset increment adjusted to 10 to match limit
       });
+
+      const minutes = CHANNEL_CONTENT_TTL_OPTIONS[_settings.cacheChannelContentTimeToLiveIndex]; // 5 minutes TTL;
+
+      state.channelContentTimeToLive[cacheKey] = Date.now() + 1000 * 60 * minutes;
+
+      return state.channelContent[cacheKey];
     }
   }
 
@@ -387,25 +460,19 @@ source.getContentDetails = function (url) {
     {
       url: URL_API_MEDIA_INFO,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: REQUEST_HEADERS,
       body: body,
     },
     {
       url: URL_API_VIDEO_INFO,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: REQUEST_HEADERS,
       body: body,
     },
     {
       url: URL_API_VIDEO_AGREGATES_COUNTS,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: REQUEST_HEADERS,
       body: body,
     },
     {
@@ -459,7 +526,7 @@ source.getContentDetails = function (url) {
         name: 'HLS',
         url: media_url,
         duration: duration,
-        priority: true,
+        priority: HARDCODED_TRUE,
       }),
     );
   } else if (media_url.includes('mp4')) {
@@ -475,13 +542,13 @@ source.getContentDetails = function (url) {
   return new PlatformVideoDetails({
     id:
       videoId &&
-      new PlatformID(PLATFORM, videoId, config.id, PLATFORM_CLAIMTYPE),
+      new PlatformID(PLATFORM, videoId, _config.id, PLATFORM_CLAIMTYPE),
     name: videoDetails.video_name,
     author: new PlatformAuthorLink(
       new PlatformID(
         PLATFORM,
         videoDetails.channel.channel_id,
-        config.id,
+        _config.id,
         PLATFORM_CLAIMTYPE,
       ),
       videoDetails.channel.channel_name,
@@ -500,7 +567,7 @@ source.getContentDetails = function (url) {
     duration: duration,
     thumbnails:
       videoDetails.thumbnail_url &&
-      new Thumbnails([new Thumbnail(videoDetails.thumbnail_url, 0)]),
+      new Thumbnails([new Thumbnail(videoDetails.thumbnail_url, HARDCODED_ZERO)]),
     viewCount: countDetails.view_count,
   });
 };
@@ -535,7 +602,7 @@ source.getComments = function (url) {
     .filter((c) => !c.parent)
     .map((comment) => ToComment(url, comment, allComments));
 
-  return new CommentPager(results, false);
+  return new CommentPager(results, HARDCODED_FALSE);
 };
 
 class BitchuteComment extends Comment {
@@ -552,7 +619,7 @@ class BitchuteComment extends Comment {
 class BitchuteCommentPager extends CommentPager {
   constructor(allResults, pageSize) {
     const end = Math.min(pageSize, allResults.length);
-    const results = allResults.slice(0, end);
+    const results = allResults.slice(HARDCODED_ZERO, end);
     const hasMore = pageSize < allResults.length;
     super(results, hasMore, {});
 
@@ -573,14 +640,14 @@ class BitchuteCommentPager extends CommentPager {
 function ToComment(url, c, allComments) {
   const replies = allComments.filter((z) => z.parent === c.id);
 
-  const replyCount = replies?.length ?? 0;
+  const replyCount = replies?.length ?? HARDCODED_ZERO;
 
   return new BitchuteComment({
     contextUrl: url,
     author: new PlatformAuthorLink(
-      new PlatformID(PLATFORM, c.creator ?? '', config.id),
-      c.fullname ?? '',
-      '',
+      new PlatformID(PLATFORM, c.creator ?? HARDCODED_EMPTY, _config.id),
+      c.fullname ?? HARDCODED_EMPTY,
+      HARDCODED_EMPTY,
       c.profile_picture_url,
     ),
     message: c.content,
@@ -615,7 +682,7 @@ function convertToObjects(names, values) {
 
 function convertToSeconds(time) {
   if (!time || time.indexOf(':') === -1) {
-    return 0;
+    return HARDCODED_ZERO;
   }
 
   // Split the time string by the colon
@@ -666,7 +733,7 @@ function batchRequest(requests) {
         request.method || 'GET',
         request.url,
         request.headers || {},
-        request.auth || false,
+        request.auth || HARDCODED_FALSE,
       );
     } else {
       batch = batch.requestWithBody(
@@ -674,7 +741,7 @@ function batchRequest(requests) {
         request.url,
         request.body,
         request.headers || {},
-        request.auth || false,
+        request.auth || HARDCODED_FALSE,
       );
     }
   }
@@ -688,10 +755,10 @@ function BitchuteVideoToPlatformVideo(v) {
   return new PlatformVideo({
     id:
       v.video_id &&
-      new PlatformID(PLATFORM, v.video_id, config.id, PLATFORM_CLAIMTYPE),
+      new PlatformID(PLATFORM, v.video_id, _config.id, PLATFORM_CLAIMTYPE),
     name: v.video_name,
     thumbnails:
-      v.thumbnail_url && new Thumbnails([new Thumbnail(v.thumbnail_url, 0)]),
+      v.thumbnail_url && new Thumbnails([new Thumbnail(v.thumbnail_url, HARDCODED_ZERO)]),
     duration: convertToSeconds(v.duration),
     viewCount: v.view_count,
     url: videoUrl,
@@ -702,7 +769,7 @@ function BitchuteVideoToPlatformVideo(v) {
       new PlatformID(
         PLATFORM,
         v.channel.channel_id,
-        config.id,
+        _config.id,
         PLATFORM_CLAIMTYPE,
       ),
       v.channel.channel_name,
@@ -744,11 +811,7 @@ function objectToUrlEncodedString(obj) {
 function getCommentAuthForVideo(videoId) {
   const body = JSON.stringify({ video_id: videoId });
 
-  const headers = {
-    'Content-Type': 'application/json',
-  };
-
-  const res = http.POST(URL_API_VIDEO_COMMENTS_AUTH, body, headers, false);
+  const res = http.POST(URL_API_VIDEO_COMMENTS_AUTH, body, REQUEST_HEADERS, HARDCODED_FALSE);
 
   if (!res.isOk) {
     throw new ScriptException(`Failed request [${url}] (${res.code})`);
@@ -844,7 +907,7 @@ source.getPlaylist = function (url) {
     .querySelector('body');
 
   const playlistsTitle =
-    detailsDocument.querySelector('h1#playlist-title')?.text ?? '';
+    detailsDocument.querySelector('h1#playlist-title')?.text ?? HARDCODED_EMPTY;
 
   const playlistAuthorName =
     detailsDocument.querySelector('p.author a.spa').text;
@@ -880,33 +943,33 @@ source.getPlaylist = function (url) {
     const durationText = e.querySelector('span.video-duration').text;
 
     const viewCountEl = e.querySelector('span.video-views').text || '0';
-    const viewCount = parseInt(viewCountEl.replace(/,/g, ''));
+    const viewCount = parseInt(viewCountEl.replace(/,/g, HARDCODED_EMPTY));
 
-    const description = e.querySelector('div.description')?.innerHTML ?? '';
+    const description = e.querySelector('div.description')?.innerHTML ?? HARDCODED_EMPTY;
 
     const duration = convertToSeconds(durationText);
 
     const video = {
       id: new PlatformID(
         PLATFORM,
-        videoId ?? '',
-        config.id,
+        videoId ?? HARDCODED_EMPTY,
+        _config.id,
         PLATFORM_CLAIMTYPE,
       ),
-      description: description ?? '',
-      name: title ?? '',
-      thumbnails: new Thumbnails([new Thumbnail(videoThumbnailUrl ?? '', 0)]),
+      description: description ?? HARDCODED_EMPTY,
+      name: title ?? HARDCODED_EMPTY,
+      thumbnails: new Thumbnails([new Thumbnail(videoThumbnailUrl ?? HARDCODED_EMPTY, HARDCODED_ZERO)]),
       author: new PlatformAuthorLink(
-        new PlatformID(PLATFORM, '', config.id, PLATFORM_CLAIMTYPE),
+        new PlatformID(PLATFORM, HARDCODED_EMPTY, _config.id, PLATFORM_CLAIMTYPE),
         channelName,
         channelUrl,
       ),
-      uploadDate: 0,
-      datetime: 0,
+      uploadDate: HARDCODED_ZERO,
+      datetime: HARDCODED_ZERO,
       url: videoUrl,
       duration: duration,
       viewCount: viewCount,
-      isLive: false,
+      isLive: HARDCODED_FALSE,
     };
 
     return new PlatformVideo(video);
@@ -915,15 +978,15 @@ source.getPlaylist = function (url) {
 
   return new PlatformPlaylistDetails({
     url: url,
-    id: new PlatformID(PLATFORM, '', config.id, PLATFORM_CLAIMTYPE),
+    id: new PlatformID(PLATFORM, HARDCODED_EMPTY, _config.id, PLATFORM_CLAIMTYPE),
     author: new PlatformAuthorLink(
-      new PlatformID(PLATFORM, '', config.id, PLATFORM_CLAIMTYPE),
+      new PlatformID(PLATFORM, HARDCODED_EMPTY, _config.id, PLATFORM_CLAIMTYPE),
       playlistAuthorName,
       playlistAuthorUrl,
     ),
     name: playlistsTitle,
-    thumbnail: '',
-    videoCount: videos.length ?? 0,
+    thumbnail: HARDCODED_EMPTY,
+    videoCount: videos.length ?? HARDCODED_ZERO,
     contents: new VideoPager(videos),
   });
 };
