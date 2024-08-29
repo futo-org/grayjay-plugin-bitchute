@@ -20,7 +20,8 @@
   "allowAllHttpHeaderAccess": false,
   "allowUrls": [
     "bitchute.com",
-    "*.bitchute.com"
+    "*.bitchute.com",
+    ".bitchute.com"
   ],
   "authentication": {
     "loginUrl": "https://old.bitchute.com/accounts/login/?next=/subscriptions/",
