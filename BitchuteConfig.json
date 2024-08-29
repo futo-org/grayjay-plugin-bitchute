@@ -32,6 +32,19 @@
   },
   "settings": [
     {
+      "variable": "contentSensitivityIndex",
+      "name": "Content Sensitivity",
+      "description": "Set the content sensitivity level.",
+      "type": "Dropdown",
+      "default": "1",
+      "options": [
+        "Safe - (BBFC U)",
+        "Normal - (BBFC 12)",
+        "NSFW - Not Suitable For Work (BBFC 15)",
+        "NSFL - Not Suitable For Life (BBFC 18)"
+      ]
+    },
+    {
       "variable": "showLiveVideosOnHome",
       "name": "Show Live Videos on Home",
       "description": "Show live videos on the home page (may include recently finished lives).",

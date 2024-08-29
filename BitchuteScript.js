@@ -54,9 +54,11 @@ if (IS_TESTING) {
   _settings.showLiveVideosOnHome = HARDCODED_FALSE;
   _settings.cacheChannelContent = HARDCODED_TRUE;
   _settings.cacheChannelContentTimeToLiveIndex = 5; // 10 minutes
+  _settings.contentSensitivityIndex = 1; // Normal
 }
 
 let CHANNEL_CONTENT_TTL_OPTIONS = [];
+let CONTENT_SENSITIVITY_OPTIONS = [];
 
 //Source Methods
 source.enable = function (conf, settings, saveStateStr) {
@@ -67,6 +69,13 @@ source.enable = function (conf, settings, saveStateStr) {
   _config?.settings
             ?.find((s) => s.variable == 'cacheChannelContentTimeToLiveIndex')
             ?.options?.map((s) => parseInt(s)) ?? [];
+            
+  CONTENT_SENSITIVITY_OPTIONS =
+  _config?.settings
+            ?.find((s) => s.variable == 'contentSensitivityIndex')
+            ?.options?.map((s) => {
+              return s.split('-')?.[0]?.trim()?.toLowerCase();
+            }) ?? [];
 
   let didSaveState = HARDCODED_FALSE;
 
@@ -105,6 +114,7 @@ source.getHome = function () {
         offset: this.context.offset,
         limit: 20,
         advertisable: HARDCODED_TRUE,
+        sensitivity_id: CONTENT_SENSITIVITY_OPTIONS[_settings.contentSensitivityIndex],
       };
 
       const batchArray = [
@@ -185,7 +195,7 @@ source.search = function (query) {
         offset: this.context.offset,
         limit: 50,
         query: query,
-        sensitivity_id: 'normal',
+        sensitivity_id: CONTENT_SENSITIVITY_OPTIONS[_settings.contentSensitivityIndex],
         sort: 'new',
       };
       const res = http.POST(
@@ -238,7 +248,7 @@ source.searchChannels = function (query) {
         offset: this.context.offset,
         limit: 50,
         query: query,
-        sensitivity_id: 'normal',
+        sensitivity_id: CONTENT_SENSITIVITY_OPTIONS[_settings.contentSensitivityIndex],
         sort: 'new',
       };
       const res = http.POST(
