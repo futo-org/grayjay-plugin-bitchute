@@ -40,16 +40,33 @@ const REQUEST_HEADERS = {
   'Content-Type': 'application/json',
 };
 
-let config = {};
+let _config = {};
+let _settings = {};
 
 const state = {
   channel: {},
+  channelMeta: {},
   channelContent: {},
+  channelContentTimeToLive: {}
 }
+
+if (IS_TESTING) {
+  _settings.showLiveVideosOnHome = HARDCODED_FALSE;
+  _settings.cacheChannelContent = HARDCODED_TRUE;
+  _settings.cacheChannelContentTimeToLiveIndex = 5; // 10 minutes
+}
+
+let CHANNEL_CONTENT_TTL_OPTIONS = [];
 
 //Source Methods
 source.enable = function (conf, settings, saveStateStr) {
-  config = conf ?? {};
+  _config = conf ?? {};
+  _settings = settings ?? {};
+
+  CHANNEL_CONTENT_TTL_OPTIONS =
+  _config?.settings
+            ?.find((s) => s.variable == 'cacheChannelContentTimeToLiveIndex')
+            ?.options?.map((s) => parseInt(s)) ?? [];
 
   let didSaveState = HARDCODED_FALSE;
 
@@ -101,7 +118,9 @@ source.getHome = function () {
 
       const isFirstPage = this.context.offset == HARDCODED_ZERO;
 
-      if (isFirstPage) {
+      const shouldIncludeLive = _settings.showLiveVideosOnHome && isFirstPage;
+
+      if (shouldIncludeLive) {
         batchArray.push({
           url: URL_API_LIVES,
           method: 'POST',
@@ -109,6 +128,8 @@ source.getHome = function () {
           body: JSON.stringify({}),
         });
       }
+
+      const allVideos = [];
 
       const [videoResponse, liveResponse] = batchRequest(batchArray);
 
@@ -118,15 +139,13 @@ source.getHome = function () {
         );
       }
 
-      if (isFirstPage && !liveResponse.isOk) {
-        throw new ScriptException(
-          `Failed request [${URL_API_LIVES}] (${liveResponse.code})`,
-        );
-      }
+      if(shouldIncludeLive) {
+        if (!liveResponse.isOk) {
+          throw new ScriptException(
+            `Failed request [${URL_API_LIVES}] (${liveResponse.code})`,
+          );
+        }
 
-      const allVideos = [];
-
-      if (isFirstPage) {
         const recomendedLives = JSON.parse(liveResponse.body).videos;
         allVideos.push(...recomendedLives);
       }
@@ -244,7 +263,7 @@ source.searchChannels = function (query) {
           id: new PlatformID(
             PLATFORM,
             sourceChannel?.channel_id ?? HARDCODED_EMPTY,
-            config.id,
+            _config.id,
             PLATFORM_CLAIMTYPE,
           ),
           name: sourceChannel?.channel_name ?? HARDCODED_EMPTY,
@@ -273,8 +292,13 @@ source.isChannelUrl = function (url) {
   return isChannelUrl;
 };
 
-function getChannelInfo(channelId) {
+function getChannelMeta(channelId) {
 
+  if(state.channelMeta[channelId]){
+    return state.channelMeta[channelId];
+  }
+
+debugger;
   const body = JSON.stringify({ channel_id: channelId });
   const response = http.POST(URL_API_CHANNEL, body, REQUEST_HEADERS, HARDCODED_FALSE);
 
@@ -282,9 +306,9 @@ function getChannelInfo(channelId) {
     throw new ScriptException(`Failed request [${url}] (${response.code})`);
   }
 
-  const sourceChannel = JSON.parse(response.body);
+  state.channelMeta[channelId] = JSON.parse(response.body);
 
-  return sourceChannel;
+  return state.channelMeta[channelId];
 }
 
 function getChannelLinksByProfileId(profileId) {
@@ -307,9 +331,9 @@ source.getChannel = function (url) {
 
   const channelId = extractChannelId(url);
 
-  const sourceChannel = getChannelInfo(channelId);
+  const channelMeta = getChannelMeta(channelId);
 
-  const linksData = getChannelLinksByProfileId(sourceChannel.profile_id);
+  const linksData = getChannelLinksByProfileId(channelMeta.profile_id);
 
   const links = {};
 
@@ -322,16 +346,16 @@ source.getChannel = function (url) {
     state.channel[url] = new PlatformChannel({
     id: new PlatformID(
       PLATFORM,
-      sourceChannel?.channel_id ?? HARDCODED_EMPTY,
-      config.id,
+      channelMeta?.channel_id ?? HARDCODED_EMPTY,
+      _config.id,
       PLATFORM_CLAIMTYPE,
     ),
-    name: sourceChannel?.channel_name ?? HARDCODED_EMPTY,
-    thumbnail: sourceChannel?.thumbnail_url ?? HARDCODED_EMPTY,
+    name: channelMeta?.channel_name ?? HARDCODED_EMPTY,
+    thumbnail: channelMeta?.thumbnail_url ?? HARDCODED_EMPTY,
     banner: HARDCODED_EMPTY,
-    subscribers: sourceChannel.subscriber_count,
-    description: sourceChannel.description,
-    url: `${URL_WEB_BASE_URL}${sourceChannel.channel_url}`,
+    subscribers: channelMeta.subscriber_count,
+    description: channelMeta.description,
+    url: `${URL_WEB_BASE_URL}${channelMeta.channel_url}`,
     links,
   });
 
@@ -339,9 +363,8 @@ source.getChannel = function (url) {
 };
 
 source.getChannelContents = function (url) {
+  
   const channelId = extractChannelId(url);
-
-  const sourceChannel = getChannelInfo(channelId);
 
   class ChannelContentsVideoPager extends VideoPager {
     constructor({ videos = [], hasMore = HARDCODED_TRUE, context = { offset: HARDCODED_ZERO } } = {}) {
@@ -349,11 +372,16 @@ source.getChannelContents = function (url) {
     }
 
     nextPage() {
+      const cacheKey = `${channelId}:${this.context.offset}`;
+      const cachedData = state.channelContent[cacheKey];
+      const cachedTTL = state.channelContentTimeToLive[cacheKey];
 
-      if(state.channelContent[`${channelId}:${this.context.offset}`]) {
-        return state.channelContent[`${channelId}:${this.context.offset}`];
+      // Check if cache exists and is still valid
+      if (_settings.cacheChannelContent && cachedData && cachedTTL && Date.now() < cachedTTL) {
+        return cachedData;
       }
 
+      // Cache is either expired or does not exist, so we fetch new data
       const body = {
         channel_id: channelId,
         offset: this.context.offset,
@@ -368,9 +396,11 @@ source.getChannelContents = function (url) {
 
       if (!res.isOk) {
         throw new ScriptException(
-          `Failed request [${URL_API_RECOMMENDED_VIDEOS_FEED}] (${res.code})`,
+          `Failed request [${URL_API_CHANNEL_VIDEOS}] (${res.code})`,
         );
       }
+
+      const sourceChannel = getChannelMeta(channelId);
 
       const platformVideos = JSON.parse(res.body).videos
         .map((v) => {
@@ -384,13 +414,18 @@ source.getChannelContents = function (url) {
         })
         .map(BitchuteVideoToPlatformVideo);
 
-        state.channelContent[`${channelId}:${this.context.offset}`] = new ChannelContentsVideoPager({
+      // Update the cache with new data and TTL
+      state.channelContent[cacheKey] = new ChannelContentsVideoPager({
         videos: platformVideos,
         hasMore: platformVideos.length > HARDCODED_ZERO,
-        context: { offset: this.context.offset + 20 },
+        context: { offset: this.context.offset + 10 }, // Offset increment adjusted to 10 to match limit
       });
 
-      return state.channelContent[`${channelId}:${this.context.offset}`];
+      const minutes = CHANNEL_CONTENT_TTL_OPTIONS[_settings.cacheChannelContentTimeToLiveIndex]; // 5 minutes TTL;
+
+      state.channelContentTimeToLive[cacheKey] = Date.now() + 1000 * 60 * minutes;
+
+      return state.channelContent[cacheKey];
     }
   }
 
@@ -497,13 +532,13 @@ source.getContentDetails = function (url) {
   return new PlatformVideoDetails({
     id:
       videoId &&
-      new PlatformID(PLATFORM, videoId, config.id, PLATFORM_CLAIMTYPE),
+      new PlatformID(PLATFORM, videoId, _config.id, PLATFORM_CLAIMTYPE),
     name: videoDetails.video_name,
     author: new PlatformAuthorLink(
       new PlatformID(
         PLATFORM,
         videoDetails.channel.channel_id,
-        config.id,
+        _config.id,
         PLATFORM_CLAIMTYPE,
       ),
       videoDetails.channel.channel_name,
@@ -600,7 +635,7 @@ function ToComment(url, c, allComments) {
   return new BitchuteComment({
     contextUrl: url,
     author: new PlatformAuthorLink(
-      new PlatformID(PLATFORM, c.creator ?? HARDCODED_EMPTY, config.id),
+      new PlatformID(PLATFORM, c.creator ?? HARDCODED_EMPTY, _config.id),
       c.fullname ?? HARDCODED_EMPTY,
       HARDCODED_EMPTY,
       c.profile_picture_url,
@@ -710,7 +745,7 @@ function BitchuteVideoToPlatformVideo(v) {
   return new PlatformVideo({
     id:
       v.video_id &&
-      new PlatformID(PLATFORM, v.video_id, config.id, PLATFORM_CLAIMTYPE),
+      new PlatformID(PLATFORM, v.video_id, _config.id, PLATFORM_CLAIMTYPE),
     name: v.video_name,
     thumbnails:
       v.thumbnail_url && new Thumbnails([new Thumbnail(v.thumbnail_url, HARDCODED_ZERO)]),
@@ -724,7 +759,7 @@ function BitchuteVideoToPlatformVideo(v) {
       new PlatformID(
         PLATFORM,
         v.channel.channel_id,
-        config.id,
+        _config.id,
         PLATFORM_CLAIMTYPE,
       ),
       v.channel.channel_name,
@@ -908,14 +943,14 @@ source.getPlaylist = function (url) {
       id: new PlatformID(
         PLATFORM,
         videoId ?? HARDCODED_EMPTY,
-        config.id,
+        _config.id,
         PLATFORM_CLAIMTYPE,
       ),
       description: description ?? HARDCODED_EMPTY,
       name: title ?? HARDCODED_EMPTY,
       thumbnails: new Thumbnails([new Thumbnail(videoThumbnailUrl ?? HARDCODED_EMPTY, HARDCODED_ZERO)]),
       author: new PlatformAuthorLink(
-        new PlatformID(PLATFORM, HARDCODED_EMPTY, config.id, PLATFORM_CLAIMTYPE),
+        new PlatformID(PLATFORM, HARDCODED_EMPTY, _config.id, PLATFORM_CLAIMTYPE),
         channelName,
         channelUrl,
       ),
@@ -933,9 +968,9 @@ source.getPlaylist = function (url) {
 
   return new PlatformPlaylistDetails({
     url: url,
-    id: new PlatformID(PLATFORM, HARDCODED_EMPTY, config.id, PLATFORM_CLAIMTYPE),
+    id: new PlatformID(PLATFORM, HARDCODED_EMPTY, _config.id, PLATFORM_CLAIMTYPE),
     author: new PlatformAuthorLink(
-      new PlatformID(PLATFORM, HARDCODED_EMPTY, config.id, PLATFORM_CLAIMTYPE),
+      new PlatformID(PLATFORM, HARDCODED_EMPTY, _config.id, PLATFORM_CLAIMTYPE),
       playlistAuthorName,
       playlistAuthorUrl,
     ),
