@@ -7,11 +7,12 @@
   "sourceUrl": "https://plugins.grayjay.app/Bitchute/BitchuteConfig.json",
   "scriptUrl": "./BitchuteScript.js",
   "repositoryUrl": "https://futo.org",
-  "version": 3,
+  "version": 4,
   "iconUrl": "./BitchuteIcon.png",
   "id": "e8b1ad5f-0c6d-497d-a5fa-0a785a16d902",
   "scriptSignature": "",
   "scriptPublicKey": "",
+  "maxDownloadParallelism": 1,
   "packages": [
     "Http",
     "DOMParser"
