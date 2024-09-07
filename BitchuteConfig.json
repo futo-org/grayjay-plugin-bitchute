@@ -78,6 +78,19 @@
         "60",
         "120"
       ]
+    },
+    {
+      "variable": "RecommendedContentIndex",
+      "name": "Recommended Content",
+      "description": "Show recommended content on the video details.",
+      "type": "Dropdown",
+      "default": "0",
+      "options": [
+        "More from same channel",
+        "Related",
+        "For you",
+        "Recent Uploads"
+      ]
     }
   ]
 }

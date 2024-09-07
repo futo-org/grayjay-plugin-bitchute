@@ -1,7 +1,9 @@
 const PLATFORM = 'Bitchute';
 const PLATFORM_CLAIMTYPE = 30;
-const URL_API_RECOMMENDED_VIDEOS_FEED =
-  'https://api.bitchute.com/api/beta9/videos';
+const URL_API_VIDEOS_BETA9 = 'https://api.bitchute.com/api/beta9/videos';
+
+const URL_API_VIDEOS_BETA = 'https://api.bitchute.com/api/beta/videos';
+
 const URL_API_CHANNEL = 'https://api.bitchute.com/api/beta/channel';
 const URL_API_LINKS = 'https://api.bitchute.com/api/beta/profile/links';
 const URL_API_SEARCH_VIDEOS = 'https://api.bitchute.com/api/beta/search/videos';
@@ -45,20 +47,24 @@ const state = {
   channelContentTimeToLive: {}
 }
 
-if (IS_TESTING) {
-  _settings.showLiveVideosOnHome = false;
-  _settings.cacheChannelContent = true;
-  _settings.cacheChannelContentTimeToLiveIndex = 5; // 10 minutes
-  _settings.contentSensitivityIndex = 1; // Normal
-}
 
 let CHANNEL_CONTENT_TTL_OPTIONS = [];
 let CONTENT_SENSITIVITY_OPTIONS = [];
+let RECOMMENDED_CONTEXT_OPTIONS = [];
 
 //Source Methods
 source.enable = function (conf, settings, saveStateStr) {
   _config = conf ?? {};
   _settings = settings ?? {};
+
+  if (IS_TESTING) {
+    _settings.showLiveVideosOnHome = false;
+    _settings.cacheChannelContent = true;
+    _settings.cacheChannelContentTimeToLiveIndex = 5; // 10 minutes
+    _settings.contentSensitivityIndex = 1; // Normal
+    _settings.RecommendedContentIndex = 0; // More from same channel
+  }
+  
 
   CHANNEL_CONTENT_TTL_OPTIONS =
   _config?.settings
@@ -71,6 +77,11 @@ source.enable = function (conf, settings, saveStateStr) {
             ?.options?.map((s) => {
               return s.split('-')?.[0]?.trim()?.toLowerCase();
             }) ?? [];
+
+  RECOMMENDED_CONTEXT_OPTIONS =
+  _config?.settings
+            ?.find((s) => s.variable == 'RecommendedContentIndex')?.options
+            ?? [];
 
   let didSaveState = false;
 
@@ -114,7 +125,7 @@ source.getHome = function () {
 
       const batchArray = [
         {
-          url: URL_API_RECOMMENDED_VIDEOS_FEED,
+          url: URL_API_VIDEOS_BETA9,
           method: 'POST',
           headers: REQUEST_HEADERS,
           body: JSON.stringify(body),
@@ -140,7 +151,7 @@ source.getHome = function () {
 
       if (!videoResponse.isOk) {
         throw new ScriptException(
-          `Failed request [${URL_API_RECOMMENDED_VIDEOS_FEED}] (${videoResponse.code})`,
+          `Failed request [${URL_API_VIDEOS_BETA9}] (${videoResponse.code})`,
         );
       }
 
@@ -303,7 +314,6 @@ function getChannelMeta(channelId) {
     return state.channelMeta[channelId];
   }
 
-debugger;
   const body = JSON.stringify({ channel_id: channelId });
   const response = http.POST(URL_API_CHANNEL, body, REQUEST_HEADERS, false);
 
@@ -442,7 +452,7 @@ source.isContentDetailsUrl = function (url) {
 };
 
 source.getContentDetails = function (url) {
-  const videoId = getVideoIdFromUrl(url);
+  const videoId = extractVideoIDFromUrl(url);
 
   const body = JSON.stringify({ video_id: videoId });
 
@@ -534,7 +544,7 @@ source.getContentDetails = function (url) {
     );
   }
 
-  return new PlatformVideoDetails({
+  const result = new PlatformVideoDetails({
     id:
       videoId &&
       new PlatformID(PLATFORM, videoId, _config.id, PLATFORM_CLAIMTYPE),
@@ -565,11 +575,17 @@ source.getContentDetails = function (url) {
       new Thumbnails([new Thumbnail(videoDetails.thumbnail_url, 0)]),
     viewCount: countDetails.view_count,
   });
+
+  result.getContentRecommendations = function () {
+    return source.getContentRecommendations(url, videoDetails);
+  };
+
+  return result;
 };
 
 //Comments
 source.getComments = function (url) {
-  const videoId = getVideoIdFromUrl(url);
+  const videoId = extractVideoIDFromUrl(url);
 
   const obj = getCommentAuthForVideo(videoId);
 
@@ -702,7 +718,7 @@ function dateToUnixSeconds(date) {
   return Math.round(Date.parse(date) / 1000);
 }
 
-function getVideoIdFromUrl(url) {
+function extractVideoIDFromUrl(url) {
   // Use regular expression to capture video IDs with letters, numbers, dashes, and underscores
   const regex = /bitchute\.com\/video\/([a-zA-Z0-9\-_]+)/;
   const match = url.match(regex);
@@ -763,13 +779,13 @@ function BitchuteVideoToPlatformVideo(v) {
     author: new PlatformAuthorLink(
       new PlatformID(
         PLATFORM,
-        v.channel.channel_id,
+        v.channel?.channel_id ?? '',
         _config.id,
         PLATFORM_CLAIMTYPE,
       ),
-      v.channel.channel_name,
-      `${URL_WEB_BASE_URL}${v.channel.channel_url}`,
-      v.channel.thumbnail_url,
+      v.channel?.channel_name ?? '',
+      `${URL_WEB_BASE_URL}${v.channel?.channel_url ?? ''}`,
+      v.channel?.thumbnail_url ?? '',
     ),
   });
 }
@@ -925,7 +941,7 @@ source.getPlaylist = function (url) {
     const videoThumbnailUrl = e
       .querySelector('div.image-container div.image img.img-responsive')
       .getAttribute('data-src');
-    const videoId = getVideoIdFromUrl(videoUrl);
+    const videoId = extractVideoIDFromUrl(videoUrl);
 
     const title = e.querySelector('div.title a.spa').text;
 
@@ -968,7 +984,6 @@ source.getPlaylist = function (url) {
     };
 
     return new PlatformVideo(video);
-
   });
 
   return new PlatformPlaylistDetails({
@@ -984,6 +999,89 @@ source.getPlaylist = function (url) {
     videoCount: videos.length ?? 0,
     contents: new VideoPager(videos),
   });
+};
+
+source.getContentRecommendations = (url, initialData) => {
+  const selectedRecommendedContent =
+    RECOMMENDED_CONTEXT_OPTIONS[_settings.RecommendedContentIndex];
+  const isMoreFromSameChannel =
+    selectedRecommendedContent === 'More from same channel';
+  const isRelated = selectedRecommendedContent === 'Related';
+  const isForYou = selectedRecommendedContent === 'For you';
+  const isRecentUploads = selectedRecommendedContent === 'Recent Uploads';
+
+  let requestUrl = '';
+  let body = {};
+
+  const videoId = extractVideoIDFromUrl(url);
+
+  if (!initialData) {
+    const [videoDetailsResponse] = batchRequest([
+      {
+        url: URL_API_VIDEO_INFO,
+        method: 'POST',
+        headers: REQUEST_HEADERS,
+        body: JSON.stringify({ video_id: videoId }),
+      },
+    ]);
+
+    if (!videoDetailsResponse.isOk) {
+      throw new ScriptException(
+        `Failed request videoDetailsResponse (${videoDetailsResponse.code})`,
+      );
+    }
+
+    initialData = JSON.parse(videoDetailsResponse.body);
+  }
+
+  if (isMoreFromSameChannel) {
+    body = { channel_id: initialData.channel.channel_id, offset: 0, limit: 50 };
+    requestUrl = URL_API_CHANNEL_VIDEOS;
+  } else if (isRelated || isRecentUploads) { //currently they have same beahvior as "Related"
+    body = {
+      selection: 'popular',
+      offset: 0,
+      limit: 10,
+      category_id: initialData.category_id,
+    };
+    requestUrl = URL_API_VIDEOS_BETA;
+  } else if (isForYou) {
+    body = { selection: 'popular', offset: 0, limit: 10, category_id: 'news' };
+    requestUrl = URL_API_VIDEOS_BETA;
+  }
+
+  const res = http.POST(
+    requestUrl,
+    JSON.stringify(body),
+    REQUEST_HEADERS,
+    false,
+  );
+
+  if (!res.isOk) {
+    throw new ScriptException(`Failed request [${requestUrl}] (${res.code})`);
+  }
+
+  let videos = JSON.parse(res.body).videos;
+
+  if (isMoreFromSameChannel) {
+    const channel = initialData?.channel ?? {
+      channel_id: '',
+      channel_name: '',
+      channel_url: '',
+      thumbnail_url: '',
+    };
+
+    videos = videos.map((v) => {
+      v.channel = channel;
+      return v;
+    });
+  }
+
+  const platformVideos = videos
+    .filter((v) => v.video_id !== videoId) // remove current video from recommendations
+    .map(BitchuteVideoToPlatformVideo);
+
+  return new VideoPager(platformVideos ?? [], false);
 };
 
 log('LOADED');
