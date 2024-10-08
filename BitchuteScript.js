@@ -24,14 +24,21 @@ const URL_WEB_BASE_URL = 'https://www.bitchute.com';
 const URL_WEB_BASE_URL_OLD = 'https://old.bitchute.com';
 const URL_WEB_LOGIN_URL_OLD = 'https://old.bitchute.com/accounts/login/';
 const URL_WEB_BASE_URL_VIDEOS = 'https://www.bitchute.com/video/';
-const URL_WEB_CHANNEL_URL = 'https://www.bitchute.com/channel';
 const URL_WEB_SUBSCRIPTIONS_OLD = 'https://old.bitchute.com/subscriptions/';
 const URL_WEB_PLAYLISTS_OLD = 'https://old.bitchute.com/playlists/';
 
-const BITCHUTE_VIDEO_URL_REGEX = /bitchute\.com\/video\/([a-zA-Z0-9]+)/;
+const BITCHUTE_CHANNEL_URL_REGEX = /bitchute\.com\/channel\//;
+
+const BITCHUTE_VIDEO_URL_REGEX = /bitchute\.com\/video\//
+
+const BITCHUTE_HLS_URL_REGEX = /https:\/\/.*\.m3u8/;
+
+const BITCHUTE_MPEG_URL_REGEX = /https:\/\/.*\.mp4/;
 
 const BITCHUTE_PLAYLIST_URL_REGEX =
-  /^https:\/\/old\.bitchute\.com\/playlist\/(favorites|watch-later|[a-zA-Z0-9]+)\/?$/;
+/^https:\/\/old\.bitchute\.com\/playlist\/(favorites|watch-later|recently-viewed|[a-zA-Z0-9]+)\/?$/;
+
+const BITCHUTE_PLAYLIST_PRIVATE_URL_REGEX = /\/playlist\/(favorites|watch-later|recently-viewed)/;
 
 const REQUEST_HEADERS = {
   'Content-Type': 'application/json',
@@ -304,8 +311,7 @@ source.searchChannels = function (query) {
 
 //Channel
 source.isChannelUrl = function (url) {
-  const isChannelUrl = url.includes('bitchute.com/channel/');
-  return isChannelUrl;
+  return BITCHUTE_CHANNEL_URL_REGEX.test(url);
 };
 
 function getChannelMeta(channelId) {
@@ -448,7 +454,7 @@ source.getChannelContents = function (url) {
 };
 
 source.isContentDetailsUrl = function (url) {
-  return url.includes('bitchute.com/video/');
+  return BITCHUTE_VIDEO_URL_REGEX.test(url);
 };
 
 source.getContentDetails = function (url) {
@@ -525,7 +531,7 @@ source.getContentDetails = function (url) {
 
   const sources = [];
 
-  if (media_url.includes('m3u8')) {
+  if (BITCHUTE_HLS_URL_REGEX.test(media_url)) {
     sources.push(
       new HLSSource({
         name: 'HLS',
@@ -534,12 +540,13 @@ source.getContentDetails = function (url) {
         priority: true,
       }),
     );
-  } else if (media_url.includes('mp4')) {
+  } else if (BITCHUTE_MPEG_URL_REGEX.test(media_url)) {
     sources.push(
       new VideoUrlSource({
         name: mediaDetails.media_type,
         duration: duration,
         url: media_url,
+				container: "video/mp4"
       }),
     );
   }
@@ -895,7 +902,7 @@ source.isPlaylistUrl = function (url) {
 
 source.getPlaylist = function (url) {
 
-  const isPrivate = url.includes('/playlist/favorites') || url.includes('/playlist/watch-later');
+  const isPrivate = BITCHUTE_PLAYLIST_PRIVATE_URL_REGEX.test(url);
 
   if (isPrivate && !bridge.isLoggedIn()) {
     throw new LoginRequiredException('Login to import Subscriptions');
