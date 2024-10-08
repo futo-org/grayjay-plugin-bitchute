@@ -540,6 +540,7 @@ source.getContentDetails = function (url) {
         name: mediaDetails.media_type,
         duration: duration,
         url: media_url,
+				container: "video/mp4"
       }),
     );
   }
