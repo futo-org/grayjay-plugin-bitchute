@@ -30,8 +30,11 @@ const URL_WEB_PLAYLISTS_OLD = 'https://old.bitchute.com/playlists/';
 
 const BITCHUTE_VIDEO_URL_REGEX = /bitchute\.com\/video\/([a-zA-Z0-9]+)/;
 
+
 const BITCHUTE_PLAYLIST_URL_REGEX =
-  /^https:\/\/old\.bitchute\.com\/playlist\/(favorites|watch-later|[a-zA-Z0-9]+)\/?$/;
+/^https:\/\/old\.bitchute\.com\/playlist\/(favorites|watch-later|recently-viewed|[a-zA-Z0-9]+)\/?$/;
+
+const BITCHUTE_PLAYLIST_PRIVATE_URL_REGEX = /\/playlist\/(favorites|watch-later|recently-viewed)/;
 
 const REQUEST_HEADERS = {
   'Content-Type': 'application/json',
@@ -896,7 +899,7 @@ source.isPlaylistUrl = function (url) {
 
 source.getPlaylist = function (url) {
 
-  const isPrivate = url.includes('/playlist/favorites') || url.includes('/playlist/watch-later');
+  const isPrivate = BITCHUTE_PLAYLIST_PRIVATE_URL_REGEX.test(url);
 
   if (isPrivate && !bridge.isLoggedIn()) {
     throw new LoginRequiredException('Login to import Subscriptions');
