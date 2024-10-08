@@ -7,7 +7,7 @@
   "sourceUrl": "https://plugins.grayjay.app/Bitchute/BitchuteConfig.json",
   "scriptUrl": "./BitchuteScript.js",
   "repositoryUrl": "https://futo.org",
-  "version": 4,
+  "version": 5,
   "iconUrl": "./BitchuteIcon.png",
   "id": "e8b1ad5f-0c6d-497d-a5fa-0a785a16d902",
   "scriptSignature": "",
@@ -77,6 +77,19 @@
         "30",
         "60",
         "120"
+      ]
+    },
+    {
+      "variable": "RecommendedContentIndex",
+      "name": "Recommended Content",
+      "description": "Show recommended content on the video details.",
+      "type": "Dropdown",
+      "default": "0",
+      "options": [
+        "More from same channel",
+        "Related",
+        "For you",
+        "Recent Uploads"
       ]
     }
   ]
