@@ -704,15 +704,28 @@ function convertToSeconds(time) {
   }
 
   // Split the time string by the colon
-  let parts = time.split(':');
+  let parts = time.split(':').map(part => parseInt(part, 10));
 
-  // Parse minutes and seconds as integers
-  let minutes = parseInt(parts[0], 10);
-  let seconds = parseInt(parts[1], 10);
+  let totalSeconds = 0;
 
-  // Convert minutes to seconds and add them to the seconds value
-  let totalSeconds = minutes * 60 + seconds;
+  // Handle different time formats based on the number of parts
+  if (parts.length === 3) {
+    // Format is hh:mm:ss
+    let hours = parts[0];
+    let minutes = parts[1];
+    let seconds = parts[2];
+    totalSeconds = (hours * 3600) + (minutes * 60) + seconds;
+  } else if (parts.length === 2) {
+    // Format is mm:ss
+    let minutes = parts[0];
+    let seconds = parts[1];
+    totalSeconds = (minutes * 60) + seconds;
+  } else {
+    // Invalid format, return 0
+    return 0;
+  }
 
+  
   return totalSeconds;
 }
 
