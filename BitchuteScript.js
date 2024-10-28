@@ -232,7 +232,7 @@ source.search = function (query) {
 
       return new SearchVideoPager({
         videos: platformVideos,
-        hasMore: platformVideos.length > 0,
+        hasMore: false,
         context: { offset: this.context.offset + 50 },
       });
     }
@@ -300,8 +300,8 @@ source.searchChannels = function (query) {
 
       return new SearchChannelsPager({
         videos: channels,
-        hasMore: channels.length > 0,
-        context: { offset: this.context.offset + 50 },
+        hasMore: false,
+        context: { offset: (this?.context?.offset ?? 0) + 50 },
       });
     }
   }
