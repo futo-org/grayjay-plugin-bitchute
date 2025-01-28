@@ -9,18 +9,13 @@ const URL_API_PROFILE = 'https://api.bitchute.com/api/beta/profile';
 const URL_API_PROFILE_VIDEOS = 'https://api.bitchute.com/api/beta/profile/videos';
 const URL_API_LINKS = 'https://api.bitchute.com/api/beta/profile/links';
 const URL_API_SEARCH_VIDEOS = 'https://api.bitchute.com/api/beta/search/videos';
-const URL_API_CHANNEL_VIDEOS =
-  'https://api.bitchute.com/api/beta/channel/videos';
-const URL_API_SEARCH_CHANNELS =
-  'https://api.bitchute.com/api/beta/search/channels';
+const URL_API_CHANNEL_VIDEOS = 'https://api.bitchute.com/api/beta/channel/videos';
+const URL_API_SEARCH_CHANNELS = 'https://api.bitchute.com/api/beta/search/channels';
 const URL_API_MEDIA_INFO = 'https://api.bitchute.com/api/beta/video/media';
 const URL_API_VIDEO_INFO = 'https://api.bitchute.com/api/beta9/video';
-const URL_API_VIDEO_AGREGATES_COUNTS =
-  'https://api.bitchute.com/api/beta/video/counts';
-const URL_API_VIDEO_COMMENTS =
-  'https://commentfreely.bitchute.com/api/get_comments/';
-const URL_API_VIDEO_COMMENTS_AUTH =
-  'https://api.bitchute.com/api/beta/apps/commentfreely/video';
+const URL_API_VIDEO_AGREGATES_COUNTS = 'https://api.bitchute.com/api/beta/video/counts';
+const URL_API_VIDEO_COMMENTS = 'https://commentfreely.bitchute.com/api/get_comments/';
+const URL_API_VIDEO_COMMENTS_AUTH = 'https://api.bitchute.com/api/beta/apps/commentfreely/video';
 const URL_API_LIVES = 'https://api.bitchute.com/api/beta9/cache/livestreams';
 const URL_WEB_BASE_URL = 'https://www.bitchute.com';
 const URL_WEB_BASE_URL_OLD = 'https://old.bitchute.com';
@@ -28,6 +23,7 @@ const URL_WEB_LOGIN_URL_OLD = 'https://old.bitchute.com/accounts/login/';
 const URL_WEB_BASE_URL_VIDEOS = 'https://www.bitchute.com/video/';
 const URL_WEB_SUBSCRIPTIONS_OLD = 'https://old.bitchute.com/subscriptions/';
 const URL_WEB_PLAYLISTS_OLD = 'https://old.bitchute.com/playlists/';
+
 const URl_WEB_PLAYLIST_BY_QUERY_REGEX = /^https:\/\/www\.bitchute\.com\/video\/playlist\?playlistId=([a-zA-Z0-9]+)$/;
 
 const BITCHUTE_CHANNEL_URL_REGEX = /bitchute\.com\/channel\//;
@@ -213,47 +209,23 @@ source.getSearchCapabilities = () => {
 };
 
 source.search = function (query) {
-  class SearchVideoPager extends VideoPager {
-    constructor({ videos = [], hasMore = true, context = {} } = {}) {
-      super(videos, hasMore, context);
-    }
-
-    nextPage() {
-      const body = {
-        offset: this.context.offset,
-        limit: 50,
-        query: query,
-        sensitivity_id: CONTENT_SENSITIVITY_OPTIONS[_settings.contentSensitivityIndex],
-        sort: 'new',
-      };
-      const res = http.POST(
-        URL_API_SEARCH_VIDEOS,
-        JSON.stringify(body),
-        REQUEST_HEADERS,
-        false,
-      );
-
-      if (!res.isOk) {
-        throw new ScriptException(
-          `Failed request [${URL_API_SEARCH_VIDEOS}] (${res.code})`,
-        );
-      }
-
-      const searchResultVideos = JSON.parse(res.body).videos;
-
-      const platformVideos = searchResultVideos.map(
-        BitchuteVideoToPlatformVideo,
-      );
-
-      return new SearchVideoPager({
-        videos: platformVideos,
-        hasMore: false,
-        context: { offset: this.context.offset + 50 },
-      });
-    }
+  const params = {
+    url: URL_API_SEARCH_VIDEOS,
+    root: 'videos',
+    total_property: 'video_count',
+    request_body: {
+      offset: 0,
+      limit: 50,
+      query: query,
+      sensitivity_id: CONTENT_SENSITIVITY_OPTIONS[_settings.contentSensitivityIndex],
+      sort: 'new',
+    },
+    transform: BitchuteVideoToPlatformVideo,
   }
 
-  return new SearchVideoPager().nextPage();
+   let contentPager =  new VideosByQueryPager(params);
+
+   return contentPager.nextPage();
 };
 
 source.getSearchChannelContentsCapabilities = function () {
@@ -446,27 +418,24 @@ function getChannelContents(url) {
 
   const sourceChannel = getChannelMeta(channelId);
 
-  const query = {
-    key: 'channel_id',
-    value: channelId,
+  const params = {
+    cacheKey: 'channel_id',
+    cacheValue: channelId,
     url: URL_API_CHANNEL_VIDEOS,
-    offset: 0,
-    limit: 10,
     root: 'videos',
-    transform: (v) => {
-      
-      v.channel = {
-        channel_id: sourceChannel.channel_id,
-        channel_name: sourceChannel.channel_name,
-        channel_url: sourceChannel.channel_url,
-        thumbnail_url: sourceChannel.thumbnail_url,
-      };
-
-      return BitchuteVideoToPlatformVideo(v);
+    total_property: 'video_count',
+    total: sourceChannel.video_count,
+    request_body: {
+      offset: 0,
+      limit: 10,
+      channel_id: channelId,
     },
-  };
+    transform: BitchuteVideoToPlatformVideo,
+  }
 
-  return VideosByQueryPager(query);
+   let contentPager =  new VideosByQueryPager(params);
+
+   return contentPager.nextPage();
 
 }
 
@@ -475,12 +444,16 @@ function getProfileContents(url) {
   const profile_id = extractProfileId(url);
 
   const query = {
-    key: 'profile_id',
-    value: profile_id,
+    cacheKey: 'profile_id',
+    cacheValue: profile_id,
     url: URL_API_PROFILE_VIDEOS,
-    offset: 0,
-    limit: 10,
     root: 'videos',
+    total_property: 'video_count',
+    request_body: {
+      offset: 0,
+      limit: 10,
+      profile_id: profile_id,
+    },
     transform: (v) => {
       return BitchuteVideoToPlatformVideo(v);
     }
@@ -503,12 +476,15 @@ source.getChannelPlaylists = (url) => {
     const profileMeta = getProfile(url);
 
     const query = {
-      key: 'profile_id',
-      value: profile_id,
+      cacheKey: 'profile_id',
+      cacheValue: profile_id,
       url: 'https://api.bitchute.com/api/beta/profile/playlists',
-      offset: 0,
-      limit: 50,
       root: 'playlists',
+      request_body: {
+        offset: 0,
+        limit: 50,
+        profile_id: profile_id,
+      },
       transform: (playlist) => {
         
         return new PlatformPlaylist({
@@ -724,7 +700,7 @@ source.getComments = function (url) {
 };
 
 
-function VideosByQueryPager(queryKeyPair) {
+function VideosByQueryPager(options) {
 
   class ContentByQueryPager extends VideoPager {
     constructor({ videos = [], hasMore = true, context = { offset: 0 } } = {}) {
@@ -732,64 +708,80 @@ function VideosByQueryPager(queryKeyPair) {
     }
 
     nextPage() {
+      const requestBody = options.request_body;
+      
+      requestBody.offset = this.context.offset ?? 0;
+      requestBody.limit = this.context.limit ?? 50;
 
-      // Cache is either expired or does not exist, so we fetch new data
-      const body = {
-        // channel_id: channelId,
-        offset: this.context.offset,
-        limit: 10,
-      };
-
-      const cacheKey = `${queryKeyPair.url}:${queryKeyPair.key}:${queryKeyPair.value}:${this.context.offset}`;
+      const cacheKey = `${options.url}:${options.cacheKey}:${options.cacheValue}:${this.context.offset}`;
       const cachedData = state.channelContent[cacheKey];
       const cachedTTL = state.channelContentTimeToLive[cacheKey];
-
+      
       // Check if cache exists and is still valid
       if (_settings.cacheChannelContent && cachedData && cachedTTL && Date.now() < cachedTTL) {
         return cachedData;
       }
 
-      body[queryKeyPair.key] = queryKeyPair.value;
-
-      const useAuth = queryKeyPair.auth == undefined ? false : queryKeyPair.auth;
-
+      const useAuth = options.auth ?? false;
+      
       const res = http.POST(
-        queryKeyPair.url,
-        JSON.stringify(body),
+        options.url,
+        JSON.stringify(requestBody),
         REQUEST_HEADERS,
         useAuth,
       );
 
       if (!res.isOk) {
-        
+
         throw new ScriptException(
-          `Failed request [${queryKeyPair.url}] (${res.code})`,
+          `Failed request [${options.url}] (${res.code})`
         );
       }
 
-      if(!queryKeyPair.transform) {
-        queryKeyPair.transform = (v) => v;
+      options.transform = options.transform || (v => v);
+
+      const responseBody = JSON.parse(res.body);
+
+      if (!options.total && options.total_property) {
+        const totalCandidate = responseBody[options.total_property];
+        if (!isNaN(totalCandidate)) {
+          options.total = totalCandidate;
+        }
       }
       
-      const platformVideos = JSON.parse(res.body)[queryKeyPair.root]
-      .map(queryKeyPair.transform)
-      
-      // Update the cache with new data and TTL
-      state.channelContent[cacheKey] = new ContentByQueryPager({
+      const platformVideos = responseBody[options.root]
+        .map(options.transform);
+
+      const newOffset = this.context.offset + requestBody.limi;
+
+      // Fix hasMore calculation and reference to limit
+      const hasMore = platformVideos.length > 0 && (
+        (platformVideos.length * (this.context.offset + 1) < options.total) || 
+        platformVideos.length >= (this.context.limit ?? 50)
+      );
+
+      // Create new pager instance
+      const newPager = new ContentByQueryPager({
         videos: platformVideos,
-        hasMore: platformVideos.length * (this.context.offset) >= queryKeyPair.total,
-        context: { offset: this.context.offset + 10 }, // Offset increment adjusted to 10 to match limit
+        hasMore,
+        context: { 
+          offset: newOffset,
+          limit: this.context.limit ?? 50
+        }
       });
 
-      const minutes = CHANNEL_CONTENT_TTL_OPTIONS[_settings.cacheChannelContentTimeToLiveIndex]; // 5 minutes TTL;
+      // Update the cache with new data and TTL
+      if (_settings.cacheChannelContent) {
+        state.channelContent[cacheKey] = newPager;
+        const minutes = CHANNEL_CONTENT_TTL_OPTIONS[_settings.cacheChannelContentTimeToLiveIndex];
+        state.channelContentTimeToLive[cacheKey] = Date.now() + 1000 * 60 * minutes;
+      }
 
-      state.channelContentTimeToLive[cacheKey] = Date.now() + 1000 * 60 * minutes;
-
-      return state.channelContent[cacheKey];
+      return newPager;
     }
   }
-
-  return new ContentByQueryPager().nextPage();
+  
+  return new ContentByQueryPager();
 }
 
 function trimEndSlash(str) {
@@ -1146,14 +1138,17 @@ source.getPlaylist = function (url) {
   }
 
   const query = {
-    key: 'playlist_id',
-    value: playlist_id,
+    cacheKey: 'playlist_id',
+    cacheValue: playlist_id,
     url: 'https://api.bitchute.com/api/beta/playlist/videos',
-    offset: 0,
-    limit: 50,
     root: 'videos',
     total: playlistInfo.video_count,
     auth: isPrivate,
+    request_body: {
+      offset: 0,
+      limit: 50,
+      playlist_id: playlist_id,
+    },
     transform: (v) => {
       if(playlistInfo.profile_id) {
         v.channel = channel;
