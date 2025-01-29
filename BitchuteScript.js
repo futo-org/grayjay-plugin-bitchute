@@ -127,77 +127,45 @@ source.saveState = () => {
 };
 
 source.getHome = function () {
-  class RecommendedVideoPager extends VideoPager {
-    constructor({ videos = [], hasMore = true, context = { offset: 0 } } = {}) {
-      super(videos, hasMore, context);
-    }
 
-    nextPage() {
-      const body = {
+  const requests = [
+    {
+      url: URL_API_LIVES,
+      root: 'videos',
+      total_property: 'video_count',
+      request_body: {},
+      transform: BitchuteVideoToPlatformVideo,
+    },
+    {
+      url: URL_API_VIDEOS_BETA9,
+      root: 'videos',
+      total_property: 'video_count',
+      request_body: {
         selection: 'suggested',
-        offset: this.context.offset,
+        offset: 0,
         limit: 20,
         advertisable: true,
         sensitivity_id: CONTENT_SENSITIVITY_OPTIONS[_settings.contentSensitivityIndex],
-      };
+      },
+      transform: BitchuteVideoToPlatformVideo,
+    },
+    {
+      url: URL_API_VIDEOS_BETA,
+      root: 'videos',
+      total_property: 'video_count',
+      request_body: {
+        selection:"popular",
+        offset:0,
+        limit:20,
+        advertisable:true
+      },
+      transform: BitchuteVideoToPlatformVideo,
+    },
+  ];
 
-      const batchArray = [
-        {
-          url: URL_API_VIDEOS_BETA9,
-          method: 'POST',
-          headers: REQUEST_HEADERS,
-          body: JSON.stringify(body),
-        },
-      ];
+  const contentPager = createMultiSourcePager(requests.filter(r =>  _settings.showLiveVideosOnHome || r.url != URL_API_LIVES));
 
-      const isFirstPage = this.context.offset == 0;
-
-      const shouldIncludeLive = _settings.showLiveVideosOnHome && isFirstPage;
-
-      if (shouldIncludeLive) {
-        batchArray.push({
-          url: URL_API_LIVES,
-          method: 'POST',
-          headers: REQUEST_HEADERS,
-          body: JSON.stringify({}),
-        });
-      }
-
-      const allVideos = [];
-
-      const [videoResponse, liveResponse] = batchRequest(batchArray);
-
-      if (!videoResponse.isOk) {
-        throw new ScriptException(
-          `Failed request [${URL_API_VIDEOS_BETA9}] (${videoResponse.code})`,
-        );
-      }
-
-      if(shouldIncludeLive) {
-        if (!liveResponse.isOk) {
-          throw new ScriptException(
-            `Failed request [${URL_API_LIVES}] (${liveResponse.code})`,
-          );
-        }
-
-        const recomendedLives = JSON.parse(liveResponse.body).videos;
-        allVideos.push(...recomendedLives);
-      }
-
-      const homeVideos = JSON.parse(videoResponse.body).videos;
-      allVideos.push(...homeVideos);
-
-      const platformVideos = allVideos.map(BitchuteVideoToPlatformVideo);
-
-      return new RecommendedVideoPager({
-        videos: platformVideos,
-        hasMore: platformVideos.length > 0,
-        context: { offset: this.context.offset + 20 },
-      });
-    }
-  }
-
-  return new RecommendedVideoPager().nextPage();
+   return contentPager.nextPage();
 };
 
 source.getSearchCapabilities = () => {
@@ -209,7 +177,7 @@ source.getSearchCapabilities = () => {
 };
 
 source.search = function (query) {
-  const params = {
+  const contentPager = createMultiSourcePager([{
     url: URL_API_SEARCH_VIDEOS,
     root: 'videos',
     total_property: 'video_count',
@@ -221,9 +189,7 @@ source.search = function (query) {
       sort: 'new',
     },
     transform: BitchuteVideoToPlatformVideo,
-  }
-
-   let contentPager =  new VideosByQueryPager(params);
+  }]);
 
    return contentPager.nextPage();
 };
@@ -418,7 +384,7 @@ function getChannelContents(url) {
 
   const sourceChannel = getChannelMeta(channelId);
 
-  const params = {
+  const contentPager = createMultiSourcePager([{
     cacheKey: 'channel_id',
     cacheValue: channelId,
     url: URL_API_CHANNEL_VIDEOS,
@@ -431,9 +397,7 @@ function getChannelContents(url) {
       channel_id: channelId,
     },
     transform: BitchuteVideoToPlatformVideo,
-  }
-
-   let contentPager =  new VideosByQueryPager(params);
+  }]);
 
    return contentPager.nextPage();
 
@@ -443,7 +407,7 @@ function getProfileContents(url) {
 
   const profile_id = extractProfileId(url);
 
-  const query = {
+  const pager = createMultiSourcePager([{
     cacheKey: 'profile_id',
     cacheValue: profile_id,
     url: URL_API_PROFILE_VIDEOS,
@@ -457,9 +421,9 @@ function getProfileContents(url) {
     transform: (v) => {
       return BitchuteVideoToPlatformVideo(v);
     }
-  };
+  }]);
 
-  return VideosByQueryPager(query);
+  return pager;
 
 }
 
@@ -475,7 +439,7 @@ source.getChannelPlaylists = (url) => {
 
     const profileMeta = getProfile(url);
 
-    const query = {
+    const pager = createMultiSourcePager([{
       cacheKey: 'profile_id',
       cacheValue: profile_id,
       url: 'https://api.bitchute.com/api/beta/profile/playlists',
@@ -506,9 +470,9 @@ source.getChannelPlaylists = (url) => {
           url: `${URL_WEB_BASE_URL}/playlist/${playlist.playlist_id}`,
         });
       }
-    };
+    }]);
   
-  return VideosByQueryPager(query);
+  return pager.nextPage();
 
   }
 
@@ -700,88 +664,160 @@ source.getComments = function (url) {
 };
 
 
-function VideosByQueryPager(options) {
+function createMultiSourcePager(sourcesConfig = []) {
 
-  class ContentByQueryPager extends VideoPager {
-    constructor({ videos = [], hasMore = true, context = { offset: 0 } } = {}) {
-      super(videos, hasMore, context);
+  class MultiSourceVideoPager extends VideoPager {
+    constructor({
+      videos = [],
+      hasMore = true,
+      contexts = {},
+      currentSources = new Set(),
+      globalSeenVideoIds = new Set() // Track all unique videos across sources/pages
+    } = {}) {
+      super(videos, hasMore, { offset: 0 });
+      this.contexts = contexts;
+      this.currentSources = currentSources;
+      this.globalSeenVideoIds = globalSeenVideoIds; // Global deduplication
+    }
+
+    addSource(sourceConfig) {
+      const sourceId = `${sourceConfig.url}:${sourceConfig.cacheKey}:${sourceConfig.cacheValue}`;
+      if (!this.contexts[sourceId]) {
+        this.contexts[sourceId] = {
+          offset: 0,
+          limit: sourceConfig.request_body.limit ?? 50,
+          config: sourceConfig,
+          hasMore: true,
+        };
+        this.currentSources.add(sourceId);
+      }
     }
 
     nextPage() {
-      const requestBody = options.request_body;
-      
-      requestBody.offset = this.context.offset ?? 0;
-      requestBody.limit = this.context.limit ?? 50;
-
-      const cacheKey = `${options.url}:${options.cacheKey}:${options.cacheValue}:${this.context.offset}`;
-      const cachedData = state.channelContent[cacheKey];
-      const cachedTTL = state.channelContentTimeToLive[cacheKey];
-      
-      // Check if cache exists and is still valid
-      if (_settings.cacheChannelContent && cachedData && cachedTTL && Date.now() < cachedTTL) {
-        return cachedData;
+      // Clone states to avoid mutation
+      const newContexts = {};
+      const newCurrentSources = new Set(this.currentSources);
+      for (const sourceId of this.currentSources) {
+        newContexts[sourceId] = { ...this.contexts[sourceId] };
       }
 
-      const useAuth = options.auth ?? false;
-      
-      const res = http.POST(
-        options.url,
-        JSON.stringify(requestBody),
-        REQUEST_HEADERS,
-        useAuth,
-      );
+      const batch = http.batch();
+      const sourcesToFetch = [];
+      const allNewVideos = [];
+      let hasMoreOverall = false;
 
-      if (!res.isOk) {
+      // Track new unique videos for this page
+      const newGlobalSeenVideoIds = new Set(this.globalSeenVideoIds);
 
-        throw new ScriptException(
-          `Failed request [${options.url}] (${res.code})`
+      // Process cached data first
+      for (const sourceId of newCurrentSources) {
+        const context = newContexts[sourceId];
+        if (!context.hasMore) continue;
+
+        const { config } = context;
+        const cacheKey = `${sourceId}:${context.offset}`;
+        const cachedData = state.channelContent[cacheKey];
+        const cachedTTL = state.channelContentTimeToLive[cacheKey];
+
+        // Check if cache exists and is still valid
+        if (_settings.cacheChannelContent && cachedData && cachedTTL && Date.now() < cachedTTL) {
+          const filteredVideos = [];
+          for (const video of cachedData.videos) {
+            if (!newGlobalSeenVideoIds.has(video.id)) {
+              filteredVideos.push(video);
+              newGlobalSeenVideoIds.add(video.id); // Mark as seen globally
+            }
+          }
+          allNewVideos.push(...filteredVideos);
+          context.offset += context.limit; // Advance offset even if videos were filtered
+          context.hasMore = cachedData.hasMore;
+          hasMoreOverall = hasMoreOverall || context.hasMore;
+        } else {
+          // Schedule fetch for non-cached data
+          const requestBody = {
+            ...config.request_body,
+            offset: context.offset,
+            limit: context.limit,
+          };
+          batch.POST(config.url, JSON.stringify(requestBody), REQUEST_HEADERS, config.auth ?? false);
+          sourcesToFetch.push({ sourceId, context, cacheKey });
+        }
+      }
+
+      // Fetch new data
+      let responses = [];
+      if (sourcesToFetch.length > 0) {
+        responses = batch.execute();
+        if (responses.length !== sourcesToFetch.length) {
+          throw new ScriptException("Batch response mismatch");
+        }
+      }
+
+      // Process responses
+      for (let i = 0; i < sourcesToFetch.length; i++) {
+        const { sourceId, context, cacheKey } = sourcesToFetch[i];
+        const res = responses[i];
+
+        if (!res.isOk) {
+          throw new ScriptException(`Request failed [${context.config.url}] (${res.code})`);
+        }
+
+        const responseBody = JSON.parse(res.body);
+        const config = context.config;
+
+        // Update total if needed
+        if (!config.total && config.total_property) {
+          const total = responseBody[config.total_property];
+          if (!isNaN(total)) config.total = total;
+        }
+
+        // Transform videos
+        const transform = config.transform || (v => v);
+        const videos = responseBody[config.root].map(transform);
+
+        // Filter duplicates and update global tracking
+        const filteredVideos = [];
+        for (const video of videos) {
+          if (!newGlobalSeenVideoIds.has(video.id)) {
+            filteredVideos.push(video);
+            newGlobalSeenVideoIds.add(video.id); // Mark as seen globally
+          }
+        }
+
+        // Update context
+        context.offset += context.limit;
+        const hasMore = filteredVideos.length > 0 && (
+          (filteredVideos.length * (context.offset / context.limit) < config.total) ||
+          filteredVideos.length >= context.limit
         );
-      }
+        context.hasMore = hasMore;
+        hasMoreOverall = hasMoreOverall || hasMore;
 
-      options.transform = options.transform || (v => v);
+        allNewVideos.push(...filteredVideos);
 
-      const responseBody = JSON.parse(res.body);
-
-      if (!options.total && options.total_property) {
-        const totalCandidate = responseBody[options.total_property];
-        if (!isNaN(totalCandidate)) {
-          options.total = totalCandidate;
+        // Update the cache with new data and TTL
+        if (_settings.cacheChannelContent) {
+          state.channelContent[cacheKey] = { videos, hasMore };
+          const ttlMinutes = CHANNEL_CONTENT_TTL_OPTIONS[_settings.cacheChannelContentTimeToLiveIndex];
+          state.channelContentTimeToLive[cacheKey] = Date.now() + 1000 * 60 * ttlMinutes;
         }
       }
-      
-      const platformVideos = responseBody[options.root]
-        .map(options.transform);
 
-      const newOffset = this.context.offset + requestBody.limi;
-
-      // Fix hasMore calculation and reference to limit
-      const hasMore = platformVideos.length > 0 && (
-        (platformVideos.length * (this.context.offset + 1) < options.total) || 
-        platformVideos.length >= (this.context.limit ?? 50)
-      );
-
-      // Create new pager instance
-      const newPager = new ContentByQueryPager({
-        videos: platformVideos,
-        hasMore,
-        context: { 
-          offset: newOffset,
-          limit: this.context.limit ?? 50
-        }
+      // Create new pager with updated state
+      return new MultiSourceVideoPager({
+        videos: allNewVideos,
+        hasMore: hasMoreOverall,
+        contexts: newContexts,
+        currentSources: newCurrentSources,
+        globalSeenVideoIds: newGlobalSeenVideoIds, // Pass updated tracking
       });
-
-      // Update the cache with new data and TTL
-      if (_settings.cacheChannelContent) {
-        state.channelContent[cacheKey] = newPager;
-        const minutes = CHANNEL_CONTENT_TTL_OPTIONS[_settings.cacheChannelContentTimeToLiveIndex];
-        state.channelContentTimeToLive[cacheKey] = Date.now() + 1000 * 60 * minutes;
-      }
-
-      return newPager;
     }
   }
-  
-  return new ContentByQueryPager();
+
+  // Initialize and add sources
+  const pager = new MultiSourceVideoPager();
+  sourcesConfig.forEach(config => pager.addSource(config));
+  return pager;
 }
 
 function trimEndSlash(str) {
@@ -1109,32 +1145,44 @@ source.getPlaylist = function (url) {
 
   const isPrivate = IS_PRIVATE_REGEX.test(url);
 
+  const isSystemGeneratedPlaylist = BITCHUTE_PLAYLIST_PRIVATE_URL_REGEX.test(url);
+
   if (isPrivate && !bridge.isLoggedIn()) {
     throw new LoginRequiredException('Login to import Subscriptions');
   }
   const playlist_id = extractPlaylistId(url) || extractPlaylistIdFromQuery(url);
 
-  const playlistInfoResponse = http.POST('https://api.bitchute.com/api/beta/playlist', JSON.stringify({ playlist_id }) , REQUEST_HEADERS, true);
 
-  const playlistInfo = JSON.parse(playlistInfoResponse.body);
-
+  let playlistInfo;
   let channel = {};
+  let playlistName = playlist_id;
 
-  if(playlistInfo.profile_id) {
-        
-    channel = {
-      channel_id: playlistInfo.profile_id,
-      channel_name: playlistInfo.profile_name,
-      channel_url: `${URL_WEB_BASE_URL}/profile/${playlistInfo.profile_id}`,
-      thumbnail_url: playlistInfo.thumbnail_url,
-    };
-  } else {
-    channel = {
-      channel_id: playlistInfo.channel_id,
-      channel_name: playlistInfo.channel_name,
-      channel_url: `${URL_WEB_BASE_URL}/channel/${playlistInfo.channel_id}`,
-      thumbnail_url: playlistInfo.thumbnail_url,
-    };
+  if(!isSystemGeneratedPlaylist) {
+
+    const playlistInfoResponse = http.POST('https://api.bitchute.com/api/beta/playlist', JSON.stringify({ playlist_id }) , REQUEST_HEADERS, true);
+
+    if(playlistInfoResponse.isOk) {
+      playlistInfo = JSON.parse(playlistInfoResponse.body);
+
+      playlistName = playlistInfo?.playlist_name || playlist_id;
+      
+      if(playlistInfo.profile_id) {
+              
+        channel = {
+          channel_id: playlistInfo.profile_id,
+          channel_name: playlistInfo.profile_name,
+          channel_url: `${URL_WEB_BASE_URL}/profile/${playlistInfo.profile_id}`,
+          thumbnail_url: playlistInfo.thumbnail_url,
+        };
+      } else {
+        channel = {
+          channel_id: playlistInfo.channel_id,
+          channel_name: playlistInfo.channel_name,
+          channel_url: `${URL_WEB_BASE_URL}/channel/${playlistInfo.channel_id}`,
+          thumbnail_url: playlistInfo.thumbnail_url,
+        };
+      }
+    }
   }
 
   const query = {
@@ -1142,7 +1190,7 @@ source.getPlaylist = function (url) {
     cacheValue: playlist_id,
     url: 'https://api.bitchute.com/api/beta/playlist/videos',
     root: 'videos',
-    total: playlistInfo.video_count,
+    total: playlistInfo?.video_count ?? -1,
     auth: isPrivate,
     request_body: {
       offset: 0,
@@ -1150,7 +1198,7 @@ source.getPlaylist = function (url) {
       playlist_id: playlist_id,
     },
     transform: (v) => {
-      if(playlistInfo.profile_id) {
+      if(!isSystemGeneratedPlaylist && playlistInfo?.profile_id) {
         v.channel = channel;
       }
 
@@ -1158,18 +1206,7 @@ source.getPlaylist = function (url) {
     },
   };
   
-  const all = [];
-
-   let contentPager =  new VideosByQueryPager(query);
-   
-  do {
-    
-    all.push(...contentPager.results);
-    
-    contentPager = contentPager.nextPage();
-  } while (contentPager.hasMore);
-  
-  
+  let contentPager = createMultiSourcePager([query]).nextPage();
 
   return new PlatformPlaylistDetails({
     url: url,
@@ -1179,10 +1216,10 @@ source.getPlaylist = function (url) {
       channel.channel_name,// author name
       channel.channel_url,// author url
     ),
-    name: playlistInfo.playlist_name,// playlist name
+    name: playlistName,// playlist name
     thumbnail: '',
-    videoCount: all.length ?? 0,
-    contents: new VideoPager(all),
+    videoCount: playlistInfo?.video_count ?? -1,
+    contents: contentPager,
   });
 };
 
