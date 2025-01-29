@@ -616,6 +616,7 @@ source.getContentDetails = function (url) {
       countDetails.like_count,
       countDetails.dislike_count,
     ),
+    isLive: videoDetails.state_id == 'live',
     duration: duration,
     thumbnails:
       videoDetails.thumbnail_url &&
