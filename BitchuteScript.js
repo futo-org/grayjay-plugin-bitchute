@@ -9,18 +9,13 @@ const URL_API_PROFILE = 'https://api.bitchute.com/api/beta/profile';
 const URL_API_PROFILE_VIDEOS = 'https://api.bitchute.com/api/beta/profile/videos';
 const URL_API_LINKS = 'https://api.bitchute.com/api/beta/profile/links';
 const URL_API_SEARCH_VIDEOS = 'https://api.bitchute.com/api/beta/search/videos';
-const URL_API_CHANNEL_VIDEOS =
-  'https://api.bitchute.com/api/beta/channel/videos';
-const URL_API_SEARCH_CHANNELS =
-  'https://api.bitchute.com/api/beta/search/channels';
+const URL_API_CHANNEL_VIDEOS = 'https://api.bitchute.com/api/beta/channel/videos';
+const URL_API_SEARCH_CHANNELS = 'https://api.bitchute.com/api/beta/search/channels';
 const URL_API_MEDIA_INFO = 'https://api.bitchute.com/api/beta/video/media';
 const URL_API_VIDEO_INFO = 'https://api.bitchute.com/api/beta9/video';
-const URL_API_VIDEO_AGREGATES_COUNTS =
-  'https://api.bitchute.com/api/beta/video/counts';
-const URL_API_VIDEO_COMMENTS =
-  'https://commentfreely.bitchute.com/api/get_comments/';
-const URL_API_VIDEO_COMMENTS_AUTH =
-  'https://api.bitchute.com/api/beta/apps/commentfreely/video';
+const URL_API_VIDEO_AGREGATES_COUNTS = 'https://api.bitchute.com/api/beta/video/counts';
+const URL_API_VIDEO_COMMENTS = 'https://commentfreely.bitchute.com/api/get_comments/';
+const URL_API_VIDEO_COMMENTS_AUTH = 'https://api.bitchute.com/api/beta/apps/commentfreely/video';
 const URL_API_LIVES = 'https://api.bitchute.com/api/beta9/cache/livestreams';
 const URL_WEB_BASE_URL = 'https://www.bitchute.com';
 const URL_WEB_BASE_URL_OLD = 'https://old.bitchute.com';
@@ -28,6 +23,7 @@ const URL_WEB_LOGIN_URL_OLD = 'https://old.bitchute.com/accounts/login/';
 const URL_WEB_BASE_URL_VIDEOS = 'https://www.bitchute.com/video/';
 const URL_WEB_SUBSCRIPTIONS_OLD = 'https://old.bitchute.com/subscriptions/';
 const URL_WEB_PLAYLISTS_OLD = 'https://old.bitchute.com/playlists/';
+
 const URl_WEB_PLAYLIST_BY_QUERY_REGEX = /^https:\/\/www\.bitchute\.com\/video\/playlist\?playlistId=([a-zA-Z0-9]+)$/;
 
 const BITCHUTE_CHANNEL_URL_REGEX = /bitchute\.com\/channel\//;
@@ -62,7 +58,7 @@ const REQUEST_HEADERS = {
 let _config = {};
 let _settings = {};
 
-const state = {
+let state = {
   channel: {},
   channelMeta: {},
   channelContent: {},
@@ -73,6 +69,7 @@ const state = {
 let CHANNEL_CONTENT_TTL_OPTIONS = [];
 let CONTENT_SENSITIVITY_OPTIONS = [];
 let RECOMMENDED_CONTEXT_OPTIONS = [];
+let HOME_CONTENT_FEED_OPTIONS = [];
 
 //Source Methods
 source.enable = function (conf, settings, saveStateStr) {
@@ -85,36 +82,25 @@ source.enable = function (conf, settings, saveStateStr) {
     _settings.cacheChannelContentTimeToLiveIndex = 5; // 10 minutes
     _settings.contentSensitivityIndex = 1; // Normal
     _settings.RecommendedContentIndex = 0; // More from same channel
+    _settings.homeContentFeedIndex = 0; // Popular
   }
   
 
-  CHANNEL_CONTENT_TTL_OPTIONS =
-  _config?.settings
-            ?.find((s) => s.variable == 'cacheChannelContentTimeToLiveIndex')
-            ?.options?.map((s) => parseInt(s)) ?? [];
+  CHANNEL_CONTENT_TTL_OPTIONS = loadOptionsForSetting('cacheChannelContentTimeToLiveIndex', (s) => parseInt(s))
             
-  CONTENT_SENSITIVITY_OPTIONS =
-  _config?.settings
-            ?.find((s) => s.variable == 'contentSensitivityIndex')
-            ?.options?.map((s) => {
-              return s.split('-')?.[0]?.trim()?.toLowerCase();
-            }) ?? [];
+  CONTENT_SENSITIVITY_OPTIONS = loadOptionsForSetting('contentSensitivityIndex', (s) => {
+    return s.split('-')?.[0]?.trim()?.toLowerCase();
+  })
 
-  RECOMMENDED_CONTEXT_OPTIONS =
-  _config?.settings
-            ?.find((s) => s.variable == 'RecommendedContentIndex')?.options
-            ?? [];
+  RECOMMENDED_CONTEXT_OPTIONS = loadOptionsForSetting('RecommendedContentIndex');
+
+  HOME_CONTENT_FEED_OPTIONS = loadOptionsForSetting('homeContentFeedIndex', (s) => s.toLowerCase().replace(/\s+/g, '-'));
 
   let didSaveState = false;
 
   try {
     if (saveStateStr) {
-      const saveState = JSON.parse(saveStateStr);
-      if (saveState) {
-        Object.keys(state).forEach((key) => {
-          state[key] = saveState[key];
-        });
-      }
+      state = JSON.parse(saveStateStr);
     }
   } catch (ex) {
     log('Failed to parse saveState:' + ex);
@@ -130,78 +116,82 @@ source.saveState = () => {
   return IS_TESTING ? JSON.stringify({}) : JSON.stringify(state);
 };
 
-source.getHome = function () {
-  class RecommendedVideoPager extends VideoPager {
-    constructor({ videos = [], hasMore = true, context = { offset: 0 } } = {}) {
-      super(videos, hasMore, context);
-    }
+// Default configuration for requests
+const DEFAULT_REQUEST_CONFIG = {
+  root: 'videos',
+  total_property: 'video_count',
+  offset: 0,
+  limit: 20,
+  advertisable: true
+};
 
-    nextPage() {
-      const body = {
-        selection: 'suggested',
-        offset: this.context.offset,
-        limit: 20,
-        advertisable: true,
-        sensitivity_id: CONTENT_SENSITIVITY_OPTIONS[_settings.contentSensitivityIndex],
+
+source.getHome = function() {
+  const sensitivity_id = CONTENT_SENSITIVITY_OPTIONS[_settings.contentSensitivityIndex];
+  
+  // Define request configurations
+  const requestConfigs = {
+    lives: {
+      url: URL_API_LIVES
+    },
+    all: {
+      url: URL_API_VIDEOS_BETA9,
+      selection: 'all'
+    },
+    trendingDay: {
+      url: URL_API_VIDEOS_BETA,
+      selection: 'trending-day'
+    },
+    trendingWeek: {
+      url: URL_API_VIDEOS_BETA,
+      selection: 'trending-week'
+    },
+    trendingMonth: {
+      url: URL_API_VIDEOS_BETA,
+      selection: 'trending-month'
+    },
+    suggested: {
+      url: URL_API_VIDEOS_BETA9,
+      selection: 'suggested'
+    },
+    popular: {
+      url: URL_API_VIDEOS_BETA,
+      selection: 'popular'
+    }
+  };
+
+  // Generate requests array
+  const requests = Object.entries(requestConfigs).map(([key, config]) => {
+    if (key === 'lives') {
+      return {
+        url: config.url,
+        root: DEFAULT_REQUEST_CONFIG.root,
+        total_property: DEFAULT_REQUEST_CONFIG.total_property,
+        request_body: {},
+        transform: config?.transform ?? BitchuteVideoToPlatformVideo
       };
-
-      const batchArray = [
-        {
-          url: URL_API_VIDEOS_BETA9,
-          method: 'POST',
-          headers: REQUEST_HEADERS,
-          body: JSON.stringify(body),
-        },
-      ];
-
-      const isFirstPage = this.context.offset == 0;
-
-      const shouldIncludeLive = _settings.showLiveVideosOnHome && isFirstPage;
-
-      if (shouldIncludeLive) {
-        batchArray.push({
-          url: URL_API_LIVES,
-          method: 'POST',
-          headers: REQUEST_HEADERS,
-          body: JSON.stringify({}),
-        });
-      }
-
-      const allVideos = [];
-
-      const [videoResponse, liveResponse] = batchRequest(batchArray);
-
-      if (!videoResponse.isOk) {
-        throw new ScriptException(
-          `Failed request [${URL_API_VIDEOS_BETA9}] (${videoResponse.code})`,
-        );
-      }
-
-      if(shouldIncludeLive) {
-        if (!liveResponse.isOk) {
-          throw new ScriptException(
-            `Failed request [${URL_API_LIVES}] (${liveResponse.code})`,
-          );
-        }
-
-        const recomendedLives = JSON.parse(liveResponse.body).videos;
-        allVideos.push(...recomendedLives);
-      }
-
-      const homeVideos = JSON.parse(videoResponse.body).videos;
-      allVideos.push(...homeVideos);
-
-      const platformVideos = allVideos.map(BitchuteVideoToPlatformVideo);
-
-      return new RecommendedVideoPager({
-        videos: platformVideos,
-        hasMore: platformVideos.length > 0,
-        context: { offset: this.context.offset + 20 },
-      });
     }
-  }
+    
+    return createRequestConfig(
+      config.url,
+      config.selection,
+      sensitivity_id,
+      config?.transform ?? BitchuteVideoToPlatformVideo
+    );
+  });
 
-  return new RecommendedVideoPager().nextPage();
+  // Get feed type from settings with fallback
+  const feedType = HOME_CONTENT_FEED_OPTIONS[_settings.homeContentFeedIndex ?? 0] || 'popular';
+
+  // Filter requests based on settings
+  const selection = requests.filter(request => {
+    const isLiveRequest = request.url === URL_API_LIVES;
+    return (isLiveRequest && _settings.showLiveVideosOnHome) ||
+           (!isLiveRequest && feedType === request.request_body.selection);
+  });
+
+  const contentPager = createMultiSourcePager(selection);
+  return contentPager.nextPage();
 };
 
 source.getSearchCapabilities = () => {
@@ -213,47 +203,21 @@ source.getSearchCapabilities = () => {
 };
 
 source.search = function (query) {
-  class SearchVideoPager extends VideoPager {
-    constructor({ videos = [], hasMore = true, context = {} } = {}) {
-      super(videos, hasMore, context);
-    }
+  const contentPager = createMultiSourcePager([{
+    url: URL_API_SEARCH_VIDEOS,
+    root: 'videos',
+    total_property: 'video_count',
+    request_body: {
+      offset: 0,
+      limit: 50,
+      query: query,
+      sensitivity_id: CONTENT_SENSITIVITY_OPTIONS[_settings.contentSensitivityIndex],
+      sort: 'new',
+    },
+    transform: BitchuteVideoToPlatformVideo,
+  }]);
 
-    nextPage() {
-      const body = {
-        offset: this.context.offset,
-        limit: 50,
-        query: query,
-        sensitivity_id: CONTENT_SENSITIVITY_OPTIONS[_settings.contentSensitivityIndex],
-        sort: 'new',
-      };
-      const res = http.POST(
-        URL_API_SEARCH_VIDEOS,
-        JSON.stringify(body),
-        REQUEST_HEADERS,
-        false,
-      );
-
-      if (!res.isOk) {
-        throw new ScriptException(
-          `Failed request [${URL_API_SEARCH_VIDEOS}] (${res.code})`,
-        );
-      }
-
-      const searchResultVideos = JSON.parse(res.body).videos;
-
-      const platformVideos = searchResultVideos.map(
-        BitchuteVideoToPlatformVideo,
-      );
-
-      return new SearchVideoPager({
-        videos: platformVideos,
-        hasMore: false,
-        context: { offset: this.context.offset + 50 },
-      });
-    }
-  }
-
-  return new SearchVideoPager().nextPage();
+   return contentPager.nextPage();
 };
 
 source.getSearchChannelContentsCapabilities = function () {
@@ -446,27 +410,22 @@ function getChannelContents(url) {
 
   const sourceChannel = getChannelMeta(channelId);
 
-  const query = {
-    key: 'channel_id',
-    value: channelId,
+  const contentPager = createMultiSourcePager([{
+    cacheKey: 'channel_id',
+    cacheValue: channelId,
     url: URL_API_CHANNEL_VIDEOS,
-    offset: 0,
-    limit: 10,
     root: 'videos',
-    transform: (v) => {
-      
-      v.channel = {
-        channel_id: sourceChannel.channel_id,
-        channel_name: sourceChannel.channel_name,
-        channel_url: sourceChannel.channel_url,
-        thumbnail_url: sourceChannel.thumbnail_url,
-      };
-
-      return BitchuteVideoToPlatformVideo(v);
+    total_property: 'video_count',
+    total: sourceChannel.video_count,
+    request_body: {
+      offset: 0,
+      limit: 10,
+      channel_id: channelId,
     },
-  };
+    transform: BitchuteVideoToPlatformVideo,
+  }]);
 
-  return VideosByQueryPager(query);
+   return contentPager.nextPage();
 
 }
 
@@ -474,19 +433,23 @@ function getProfileContents(url) {
 
   const profile_id = extractProfileId(url);
 
-  const query = {
-    key: 'profile_id',
-    value: profile_id,
+  const pager = createMultiSourcePager([{
+    cacheKey: 'profile_id',
+    cacheValue: profile_id,
     url: URL_API_PROFILE_VIDEOS,
-    offset: 0,
-    limit: 10,
     root: 'videos',
+    total_property: 'video_count',
+    request_body: {
+      offset: 0,
+      limit: 10,
+      profile_id: profile_id,
+    },
     transform: (v) => {
       return BitchuteVideoToPlatformVideo(v);
     }
-  };
+  }]);
 
-  return VideosByQueryPager(query);
+  return pager;
 
 }
 
@@ -502,13 +465,16 @@ source.getChannelPlaylists = (url) => {
 
     const profileMeta = getProfile(url);
 
-    const query = {
-      key: 'profile_id',
-      value: profile_id,
+    const pager = createMultiSourcePager([{
+      cacheKey: 'profile_id',
+      cacheValue: profile_id,
       url: 'https://api.bitchute.com/api/beta/profile/playlists',
-      offset: 0,
-      limit: 50,
       root: 'playlists',
+      request_body: {
+        offset: 0,
+        limit: 50,
+        profile_id: profile_id,
+      },
       transform: (playlist) => {
         
         return new PlatformPlaylist({
@@ -530,9 +496,9 @@ source.getChannelPlaylists = (url) => {
           url: `${URL_WEB_BASE_URL}/playlist/${playlist.playlist_id}`,
         });
       }
-    };
+    }]);
   
-  return VideosByQueryPager(query);
+  return pager.nextPage();
 
   }
 
@@ -676,6 +642,7 @@ source.getContentDetails = function (url) {
       countDetails.like_count,
       countDetails.dislike_count,
     ),
+    isLive: videoDetails.state_id == 'live',
     duration: duration,
     thumbnails:
       videoDetails.thumbnail_url &&
@@ -724,72 +691,160 @@ source.getComments = function (url) {
 };
 
 
-function VideosByQueryPager(queryKeyPair) {
+function createMultiSourcePager(sourcesConfig = []) {
 
-  class ContentByQueryPager extends VideoPager {
-    constructor({ videos = [], hasMore = true, context = { offset: 0 } } = {}) {
-      super(videos, hasMore, context);
+  class MultiSourceVideoPager extends VideoPager {
+    constructor({
+      videos = [],
+      hasMore = true,
+      contexts = {},
+      currentSources = new Set(),
+      globalSeenVideoIds = new Set() // Track all unique videos across sources/pages
+    } = {}) {
+      super(videos, hasMore, { offset: 0 });
+      this.contexts = contexts;
+      this.currentSources = currentSources;
+      this.globalSeenVideoIds = globalSeenVideoIds; // Global deduplication
+    }
+
+    addSource(sourceConfig) {
+      const sourceId = `${sourceConfig.url}:${sourceConfig.cacheKey}:${sourceConfig.cacheValue}`;
+      if (!this.contexts[sourceId]) {
+        this.contexts[sourceId] = {
+          offset: 0,
+          limit: sourceConfig.request_body.limit ?? 50,
+          config: sourceConfig,
+          hasMore: true,
+        };
+        this.currentSources.add(sourceId);
+      }
     }
 
     nextPage() {
-
-      // Cache is either expired or does not exist, so we fetch new data
-      const body = {
-        // channel_id: channelId,
-        offset: this.context.offset,
-        limit: 10,
-      };
-
-      const cacheKey = `${queryKeyPair.url}:${queryKeyPair.key}:${queryKeyPair.value}:${this.context.offset}`;
-      const cachedData = state.channelContent[cacheKey];
-      const cachedTTL = state.channelContentTimeToLive[cacheKey];
-
-      // Check if cache exists and is still valid
-      if (_settings.cacheChannelContent && cachedData && cachedTTL && Date.now() < cachedTTL) {
-        return cachedData;
+      // Clone states to avoid mutation
+      const newContexts = {};
+      const newCurrentSources = new Set(this.currentSources);
+      for (const sourceId of this.currentSources) {
+        newContexts[sourceId] = { ...this.contexts[sourceId] };
       }
 
-      body[queryKeyPair.key] = queryKeyPair.value;
+      const batch = http.batch();
+      const sourcesToFetch = [];
+      const allNewVideos = [];
+      let hasMoreOverall = false;
 
-      const useAuth = queryKeyPair.auth == undefined ? false : queryKeyPair.auth;
+      // Track new unique videos for this page
+      const newGlobalSeenVideoIds = new Set(this.globalSeenVideoIds);
 
-      const res = http.POST(
-        queryKeyPair.url,
-        JSON.stringify(body),
-        REQUEST_HEADERS,
-        useAuth,
-      );
+      // Process cached data first
+      for (const sourceId of newCurrentSources) {
+        const context = newContexts[sourceId];
+        if (!context.hasMore) continue;
 
-      if (!res.isOk) {
-        
-        throw new ScriptException(
-          `Failed request [${queryKeyPair.url}] (${res.code})`,
+        const { config } = context;
+        const cacheKey = `${sourceId}:${context.offset}`;
+        const cachedData = state.channelContent[cacheKey];
+        const cachedTTL = state.channelContentTimeToLive[cacheKey];
+
+        // Check if cache exists and is still valid
+        if (_settings.cacheChannelContent && cachedData && cachedTTL && Date.now() < cachedTTL) {
+          const filteredVideos = [];
+          for (const video of cachedData.videos) {
+            if (!newGlobalSeenVideoIds.has(video.id)) {
+              filteredVideos.push(video);
+              newGlobalSeenVideoIds.add(video.id); // Mark as seen globally
+            }
+          }
+          allNewVideos.push(...filteredVideos);
+          context.offset += context.limit; // Advance offset even if videos were filtered
+          context.hasMore = cachedData.hasMore;
+          hasMoreOverall = hasMoreOverall || context.hasMore;
+        } else {
+          // Schedule fetch for non-cached data
+          const requestBody = {
+            ...config.request_body,
+            offset: context.offset,
+            limit: context.limit,
+          };
+          batch.POST(config.url, JSON.stringify(requestBody), REQUEST_HEADERS, config.auth ?? false);
+          sourcesToFetch.push({ sourceId, context, cacheKey });
+        }
+      }
+
+      // Fetch new data
+      let responses = [];
+      if (sourcesToFetch.length > 0) {
+        responses = batch.execute();
+        if (responses.length !== sourcesToFetch.length) {
+          throw new ScriptException("Batch response mismatch");
+        }
+      }
+
+      // Process responses
+      for (let i = 0; i < sourcesToFetch.length; i++) {
+        const { sourceId, context, cacheKey } = sourcesToFetch[i];
+        const res = responses[i];
+
+        if (!res.isOk) {
+          throw new ScriptException(`Request failed [${context.config.url}] (${res.code})`);
+        }
+
+        const responseBody = JSON.parse(res.body);
+        const config = context.config;
+
+        // Update total if needed
+        if (!config.total && config.total_property) {
+          const total = responseBody[config.total_property];
+          if (!isNaN(total)) config.total = total;
+        }
+
+        // Transform videos
+        const transform = config.transform || (v => v);
+        const videos = responseBody[config.root].map(transform);
+
+        // Filter duplicates and update global tracking
+        const filteredVideos = [];
+        for (const video of videos) {
+          if (!newGlobalSeenVideoIds.has(video.id)) {
+            filteredVideos.push(video);
+            newGlobalSeenVideoIds.add(video.id); // Mark as seen globally
+          }
+        }
+
+        // Update context
+        context.offset += context.limit;
+        const hasMore = filteredVideos.length > 0 && (
+          (filteredVideos.length * (context.offset / context.limit) < config.total) ||
+          filteredVideos.length >= context.limit
         );
+        context.hasMore = hasMore;
+        hasMoreOverall = hasMoreOverall || hasMore;
+
+        allNewVideos.push(...filteredVideos);
+
+        // Update the cache with new data and TTL
+        if (_settings.cacheChannelContent) {
+          state.channelContent[cacheKey] = { videos, hasMore };
+          const ttlMinutes = CHANNEL_CONTENT_TTL_OPTIONS[_settings.cacheChannelContentTimeToLiveIndex];
+          state.channelContentTimeToLive[cacheKey] = Date.now() + 1000 * 60 * ttlMinutes;
+        }
       }
 
-      if(!queryKeyPair.transform) {
-        queryKeyPair.transform = (v) => v;
-      }
-      
-      const platformVideos = JSON.parse(res.body)[queryKeyPair.root]
-      .map(queryKeyPair.transform)
-      
-      // Update the cache with new data and TTL
-      state.channelContent[cacheKey] = new ContentByQueryPager({
-        videos: platformVideos,
-        hasMore: platformVideos.length * (this.context.offset) >= queryKeyPair.total,
-        context: { offset: this.context.offset + 10 }, // Offset increment adjusted to 10 to match limit
+      // Create new pager with updated state
+      return new MultiSourceVideoPager({
+        videos: allNewVideos,
+        hasMore: hasMoreOverall,
+        contexts: newContexts,
+        currentSources: newCurrentSources,
+        globalSeenVideoIds: newGlobalSeenVideoIds, // Pass updated tracking
       });
-
-      const minutes = CHANNEL_CONTENT_TTL_OPTIONS[_settings.cacheChannelContentTimeToLiveIndex]; // 5 minutes TTL;
-
-      state.channelContentTimeToLive[cacheKey] = Date.now() + 1000 * 60 * minutes;
-
-      return state.channelContent[cacheKey];
     }
   }
 
-  return new ContentByQueryPager().nextPage();
+  // Initialize and add sources
+  const pager = new MultiSourceVideoPager();
+  sourcesConfig.forEach(config => pager.addSource(config));
+  return pager;
 }
 
 function trimEndSlash(str) {
@@ -1117,45 +1172,60 @@ source.getPlaylist = function (url) {
 
   const isPrivate = IS_PRIVATE_REGEX.test(url);
 
+  const isSystemGeneratedPlaylist = BITCHUTE_PLAYLIST_PRIVATE_URL_REGEX.test(url);
+
   if (isPrivate && !bridge.isLoggedIn()) {
     throw new LoginRequiredException('Login to import Subscriptions');
   }
   const playlist_id = extractPlaylistId(url) || extractPlaylistIdFromQuery(url);
 
-  const playlistInfoResponse = http.POST('https://api.bitchute.com/api/beta/playlist', JSON.stringify({ playlist_id }) , REQUEST_HEADERS, true);
 
-  const playlistInfo = JSON.parse(playlistInfoResponse.body);
-
+  let playlistInfo;
   let channel = {};
+  let playlistName = playlist_id;
 
-  if(playlistInfo.profile_id) {
-        
-    channel = {
-      channel_id: playlistInfo.profile_id,
-      channel_name: playlistInfo.profile_name,
-      channel_url: `${URL_WEB_BASE_URL}/profile/${playlistInfo.profile_id}`,
-      thumbnail_url: playlistInfo.thumbnail_url,
-    };
-  } else {
-    channel = {
-      channel_id: playlistInfo.channel_id,
-      channel_name: playlistInfo.channel_name,
-      channel_url: `${URL_WEB_BASE_URL}/channel/${playlistInfo.channel_id}`,
-      thumbnail_url: playlistInfo.thumbnail_url,
-    };
+  if(!isSystemGeneratedPlaylist) {
+
+    const playlistInfoResponse = http.POST('https://api.bitchute.com/api/beta/playlist', JSON.stringify({ playlist_id }) , REQUEST_HEADERS, true);
+
+    if(playlistInfoResponse.isOk) {
+      playlistInfo = JSON.parse(playlistInfoResponse.body);
+
+      playlistName = playlistInfo?.playlist_name || playlist_id;
+      
+      if(playlistInfo.profile_id) {
+              
+        channel = {
+          channel_id: playlistInfo.profile_id,
+          channel_name: playlistInfo.profile_name,
+          channel_url: `${URL_WEB_BASE_URL}/profile/${playlistInfo.profile_id}`,
+          thumbnail_url: playlistInfo.thumbnail_url,
+        };
+      } else {
+        channel = {
+          channel_id: playlistInfo.channel_id,
+          channel_name: playlistInfo.channel_name,
+          channel_url: `${URL_WEB_BASE_URL}/channel/${playlistInfo.channel_id}`,
+          thumbnail_url: playlistInfo.thumbnail_url,
+        };
+      }
+    }
   }
 
   const query = {
-    key: 'playlist_id',
-    value: playlist_id,
+    cacheKey: 'playlist_id',
+    cacheValue: playlist_id,
     url: 'https://api.bitchute.com/api/beta/playlist/videos',
-    offset: 0,
-    limit: 50,
     root: 'videos',
-    total: playlistInfo.video_count,
+    total: playlistInfo?.video_count ?? -1,
     auth: isPrivate,
+    request_body: {
+      offset: 0,
+      limit: 50,
+      playlist_id: playlist_id,
+    },
     transform: (v) => {
-      if(playlistInfo.profile_id) {
+      if(!isSystemGeneratedPlaylist && playlistInfo?.profile_id) {
         v.channel = channel;
       }
 
@@ -1163,18 +1233,7 @@ source.getPlaylist = function (url) {
     },
   };
   
-  const all = [];
-
-   let contentPager =  new VideosByQueryPager(query);
-   
-  do {
-    
-    all.push(...contentPager.results);
-    
-    contentPager = contentPager.nextPage();
-  } while (contentPager.hasMore);
-  
-  
+  let contentPager = createMultiSourcePager([query]).nextPage();
 
   return new PlatformPlaylistDetails({
     url: url,
@@ -1184,10 +1243,10 @@ source.getPlaylist = function (url) {
       channel.channel_name,// author name
       channel.channel_url,// author url
     ),
-    name: playlistInfo.playlist_name,// playlist name
+    name: playlistName,// playlist name
     thumbnail: '',
-    videoCount: all.length ?? 0,
-    contents: new VideoPager(all),
+    videoCount: playlistInfo?.video_count ?? -1,
+    contents: contentPager,
   });
 };
 
@@ -1287,5 +1346,37 @@ source.getContentRecommendations = (url, initialData) => {
 
   return new VideoPager(platformVideos ?? [], false);
 };
+
+
+function loadOptionsForSetting(settingKey, transformCallback) {
+  transformCallback ??= (o) => o;
+  const setting = _config?.settings?.find((s) => s.variable == settingKey);
+  return setting?.options?.map(transformCallback) ?? [];
+}
+
+// Factory function to create request configs
+function createRequestConfig(url, selection, sensitivity_id, transform, options = {}) {
+  const config = {
+    url,
+    root: DEFAULT_REQUEST_CONFIG.root,
+    total_property: DEFAULT_REQUEST_CONFIG.total_property,
+    request_body: {
+      selection,
+      offset: DEFAULT_REQUEST_CONFIG.offset,
+      limit: DEFAULT_REQUEST_CONFIG.limit,
+      advertisable: DEFAULT_REQUEST_CONFIG.advertisable,
+      sensitivity_id
+    },
+    transform
+  };
+
+  // Add cache properties if selection exists
+  if (selection) {
+    config.cacheKey = selection;
+    config.cacheValue = selection;
+  }
+
+  return { ...config, ...options };
+}
 
 log('LOADED');
