@@ -58,7 +58,7 @@ const REQUEST_HEADERS = {
 let _config = {};
 let _settings = {};
 
-const state = {
+let state = {
   channel: {},
   channelMeta: {},
   channelContent: {},
@@ -69,6 +69,7 @@ const state = {
 let CHANNEL_CONTENT_TTL_OPTIONS = [];
 let CONTENT_SENSITIVITY_OPTIONS = [];
 let RECOMMENDED_CONTEXT_OPTIONS = [];
+let HOME_CONTENT_FEED_OPTIONS = [];
 
 //Source Methods
 source.enable = function (conf, settings, saveStateStr) {
@@ -81,36 +82,25 @@ source.enable = function (conf, settings, saveStateStr) {
     _settings.cacheChannelContentTimeToLiveIndex = 5; // 10 minutes
     _settings.contentSensitivityIndex = 1; // Normal
     _settings.RecommendedContentIndex = 0; // More from same channel
+    _settings.homeContentFeedIndex = 0; // Popular
   }
   
 
-  CHANNEL_CONTENT_TTL_OPTIONS =
-  _config?.settings
-            ?.find((s) => s.variable == 'cacheChannelContentTimeToLiveIndex')
-            ?.options?.map((s) => parseInt(s)) ?? [];
+  CHANNEL_CONTENT_TTL_OPTIONS = loadOptionsForSetting('cacheChannelContentTimeToLiveIndex', (s) => parseInt(s))
             
-  CONTENT_SENSITIVITY_OPTIONS =
-  _config?.settings
-            ?.find((s) => s.variable == 'contentSensitivityIndex')
-            ?.options?.map((s) => {
-              return s.split('-')?.[0]?.trim()?.toLowerCase();
-            }) ?? [];
+  CONTENT_SENSITIVITY_OPTIONS = loadOptionsForSetting('contentSensitivityIndex', (s) => {
+    return s.split('-')?.[0]?.trim()?.toLowerCase();
+  })
 
-  RECOMMENDED_CONTEXT_OPTIONS =
-  _config?.settings
-            ?.find((s) => s.variable == 'RecommendedContentIndex')?.options
-            ?? [];
+  RECOMMENDED_CONTEXT_OPTIONS = loadOptionsForSetting('RecommendedContentIndex');
+
+  HOME_CONTENT_FEED_OPTIONS = loadOptionsForSetting('homeContentFeedIndex', (s) => s.toLowerCase().replace(/\s+/g, '-'));
 
   let didSaveState = false;
 
   try {
     if (saveStateStr) {
-      const saveState = JSON.parse(saveStateStr);
-      if (saveState) {
-        Object.keys(state).forEach((key) => {
-          state[key] = saveState[key];
-        });
-      }
+      state = JSON.parse(saveStateStr);
     }
   } catch (ex) {
     log('Failed to parse saveState:' + ex);
@@ -126,46 +116,82 @@ source.saveState = () => {
   return IS_TESTING ? JSON.stringify({}) : JSON.stringify(state);
 };
 
-source.getHome = function () {
+// Default configuration for requests
+const DEFAULT_REQUEST_CONFIG = {
+  root: 'videos',
+  total_property: 'video_count',
+  offset: 0,
+  limit: 20,
+  advertisable: true
+};
 
-  const requests = [
-    {
-      url: URL_API_LIVES,
-      root: 'videos',
-      total_property: 'video_count',
-      request_body: {},
-      transform: BitchuteVideoToPlatformVideo,
+
+source.getHome = function() {
+  const sensitivity_id = CONTENT_SENSITIVITY_OPTIONS[_settings.contentSensitivityIndex];
+  
+  // Define request configurations
+  const requestConfigs = {
+    lives: {
+      url: URL_API_LIVES
     },
-    {
+    all: {
       url: URL_API_VIDEOS_BETA9,
-      root: 'videos',
-      total_property: 'video_count',
-      request_body: {
-        selection: 'suggested',
-        offset: 0,
-        limit: 20,
-        advertisable: true,
-        sensitivity_id: CONTENT_SENSITIVITY_OPTIONS[_settings.contentSensitivityIndex],
-      },
-      transform: BitchuteVideoToPlatformVideo,
+      selection: 'all'
     },
-    {
+    trendingDay: {
       url: URL_API_VIDEOS_BETA,
-      root: 'videos',
-      total_property: 'video_count',
-      request_body: {
-        selection:"popular",
-        offset:0,
-        limit:20,
-        advertisable:true
-      },
-      transform: BitchuteVideoToPlatformVideo,
+      selection: 'trending-day'
     },
-  ];
+    trendingWeek: {
+      url: URL_API_VIDEOS_BETA,
+      selection: 'trending-week'
+    },
+    trendingMonth: {
+      url: URL_API_VIDEOS_BETA,
+      selection: 'trending-month'
+    },
+    suggested: {
+      url: URL_API_VIDEOS_BETA9,
+      selection: 'suggested'
+    },
+    popular: {
+      url: URL_API_VIDEOS_BETA,
+      selection: 'popular'
+    }
+  };
 
-  const contentPager = createMultiSourcePager(requests.filter(r =>  _settings.showLiveVideosOnHome || r.url != URL_API_LIVES));
+  // Generate requests array
+  const requests = Object.entries(requestConfigs).map(([key, config]) => {
+    if (key === 'lives') {
+      return {
+        url: config.url,
+        root: DEFAULT_REQUEST_CONFIG.root,
+        total_property: DEFAULT_REQUEST_CONFIG.total_property,
+        request_body: {},
+        transform: config?.transform ?? BitchuteVideoToPlatformVideo
+      };
+    }
+    
+    return createRequestConfig(
+      config.url,
+      config.selection,
+      sensitivity_id,
+      config?.transform ?? BitchuteVideoToPlatformVideo
+    );
+  });
 
-   return contentPager.nextPage();
+  // Get feed type from settings with fallback
+  const feedType = HOME_CONTENT_FEED_OPTIONS[_settings.homeContentFeedIndex ?? 0] || 'popular';
+
+  // Filter requests based on settings
+  const selection = requests.filter(request => {
+    const isLiveRequest = request.url === URL_API_LIVES;
+    return (isLiveRequest && _settings.showLiveVideosOnHome) ||
+           (!isLiveRequest && feedType === request.request_body.selection);
+  });
+
+  const contentPager = createMultiSourcePager(selection);
+  return contentPager.nextPage();
 };
 
 source.getSearchCapabilities = () => {
@@ -1320,5 +1346,37 @@ source.getContentRecommendations = (url, initialData) => {
 
   return new VideoPager(platformVideos ?? [], false);
 };
+
+
+function loadOptionsForSetting(settingKey, transformCallback) {
+  transformCallback ??= (o) => o;
+  const setting = _config?.settings?.find((s) => s.variable == settingKey);
+  return setting?.options?.map(transformCallback) ?? [];
+}
+
+// Factory function to create request configs
+function createRequestConfig(url, selection, sensitivity_id, transform, options = {}) {
+  const config = {
+    url,
+    root: DEFAULT_REQUEST_CONFIG.root,
+    total_property: DEFAULT_REQUEST_CONFIG.total_property,
+    request_body: {
+      selection,
+      offset: DEFAULT_REQUEST_CONFIG.offset,
+      limit: DEFAULT_REQUEST_CONFIG.limit,
+      advertisable: DEFAULT_REQUEST_CONFIG.advertisable,
+      sensitivity_id
+    },
+    transform
+  };
+
+  // Add cache properties if selection exists
+  if (selection) {
+    config.cacheKey = selection;
+    config.cacheValue = selection;
+  }
+
+  return { ...config, ...options };
+}
 
 log('LOADED');

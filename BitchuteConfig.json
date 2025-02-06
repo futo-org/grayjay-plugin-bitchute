@@ -91,6 +91,21 @@
         "For you",
         "Recent Uploads"
       ]
+    },
+    {
+      "variable": "homeContentFeedIndex",
+      "name": "Home Content Feed",
+      "description": "Select the default content feed displayed on the home page.",
+      "type": "Dropdown",
+      "default": "0",
+      "options": [
+        "Popular",
+        "All",
+        "Suggested",
+        "Trending Day",
+        "Trending Week",
+        "Trending Month"
+      ]
     }
   ]
 }
