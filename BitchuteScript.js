@@ -213,8 +213,7 @@ source.search = function (query) {
       query: query,
       sensitivity_id: CONTENT_SENSITIVITY_OPTIONS[_settings.contentSensitivityIndex],
       sort: 'new',
-    },
-    transform: BitchuteVideoToPlatformVideo,
+    }
   }]);
 
    return contentPager.nextPage();
@@ -375,7 +374,11 @@ function getChannel(url) {
   const channelId = extractChannelId(url);
 
   const channelMeta = getChannelMeta(channelId);
+  return channelMetaToPlatformChannel(channelMeta);
 
+}
+
+function channelMetaToPlatformChannel(channelMeta) {
   const linksData = getChannelLinksByProfileId(channelMeta.profile_id);
 
   const links = {};
@@ -409,6 +412,7 @@ function getChannelContents(url) {
   const channelId = extractChannelId(url);
 
   const sourceChannel = getChannelMeta(channelId);
+  const channel = channelMetaToPlatformChannel(sourceChannel);
 
   const contentPager = createMultiSourcePager([{
     cacheKey: 'channel_id',
@@ -422,7 +426,9 @@ function getChannelContents(url) {
       limit: 10,
       channel_id: channelId,
     },
-    transform: BitchuteVideoToPlatformVideo,
+    transform: (r) => {
+      return BitchuteVideoToPlatformVideo(r, channel);
+    },
   }]);
 
    return contentPager.nextPage();
@@ -442,10 +448,7 @@ function getProfileContents(url) {
     request_body: {
       offset: 0,
       limit: 10,
-      profile_id: profile_id,
-    },
-    transform: (v) => {
-      return BitchuteVideoToPlatformVideo(v);
+      profile_id: profile_id
     }
   }]);
 
@@ -800,7 +803,7 @@ function createMultiSourcePager(sourcesConfig = []) {
 
         // Transform videos
         const transform = config.transform || (v => v);
-        const videos = responseBody[config.root].map(transform);
+        const videos = responseBody[config.root].map(e => transform(e));
 
         // Filter duplicates and update global tracking
         const filteredVideos = [];
@@ -1021,8 +1024,20 @@ function batchRequest(requests, options = { parseBody:false }) {
   }
 }
 
-function BitchuteVideoToPlatformVideo(v) {
+function BitchuteVideoToPlatformVideo(v, authorContent) {
   const videoUrl = `${URL_WEB_BASE_URL}${v.video_url}`;
+
+  const author = authorContent || new PlatformAuthorLink(
+    new PlatformID(
+      PLATFORM,
+      v.channel?.channel_id ?? '',
+      _config.id,
+      PLATFORM_CLAIMTYPE,
+    ),
+    v.channel?.channel_name ?? '',
+    `${URL_WEB_BASE_URL}${v.channel?.channel_url ?? ''}`,
+    v.channel?.thumbnail_url ?? '',
+  );
 
   return new PlatformVideo({
     id:
@@ -1036,18 +1051,8 @@ function BitchuteVideoToPlatformVideo(v) {
     isLive: v.state_id === 'live',
     uploadDate: dateToUnixSeconds(v.date_published),
     shareUrl: videoUrl,
-    author: new PlatformAuthorLink(
-      new PlatformID(
-        PLATFORM,
-        v.channel?.channel_id ?? '',
-        _config.id,
-        PLATFORM_CLAIMTYPE,
-      ),
-      v.channel?.channel_name ?? '',
-      `${URL_WEB_BASE_URL}${v.channel?.channel_url ?? ''}`,
-      v.channel?.thumbnail_url ?? '',
-    ),
-  });
+    author: author
+  })
 }
 
 function extractChannelId(url) {
@@ -1342,7 +1347,7 @@ source.getContentRecommendations = (url, initialData) => {
 
   const platformVideos = videos
     .filter((v) => v.video_id !== videoId) // remove current video from recommendations
-    .map(BitchuteVideoToPlatformVideo);
+    .map(v => BitchuteVideoToPlatformVideo(v));
 
   return new VideoPager(platformVideos ?? [], false);
 };
