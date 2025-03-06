@@ -6,7 +6,7 @@
   "authorUrl": "https://futo.org",
   "sourceUrl": "https://plugins.grayjay.app/Bitchute/BitchuteConfig.json",
   "scriptUrl": "./BitchuteScript.js",
-  "repositoryUrl": "https://futo.org",
+  "repositoryUrl": "https://gitlab.futo.org/videostreaming/plugins/bitchute",
   "version": 8,
   "iconUrl": "./BitchuteIcon.png",
   "id": "e8b1ad5f-0c6d-497d-a5fa-0a785a16d902",
