@@ -2,7 +2,7 @@
   "name": "Bitchute (Beta)",
   "platformUrl": "https://bitchute.com",
   "description": "BitChute is a video service that prioritizes creators and champions users' freedoms and privacy.",
-  "author": "Futo",
+  "author": "FUTO",
   "authorUrl": "https://futo.org",
   "sourceUrl": "https://plugins.grayjay.app/Bitchute/BitchuteConfig.json",
   "scriptUrl": "./BitchuteScript.js",
