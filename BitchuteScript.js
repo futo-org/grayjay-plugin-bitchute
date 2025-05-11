@@ -43,13 +43,13 @@ const URL_WEB = {
 
 // Regular expressions for URL parsing
 const REGEX = {
-  PLAYLIST_BY_QUERY: /^https:\/\/www\.bitchute\.com\/video\/playlist\?playlistId=([a-zA-Z0-9]+)$/,
+  PLAYLIST_BY_QUERY: /^https:\/\/www\.bitchute\.com\/video\/playlist\?playlistId=([a-zA-Z0-9_\-]+)$/,
   CHANNEL_URL: /bitchute\.com\/channel\//,
   PROFILE_URL: /bitchute\.com\/profile\//,
   VIDEO_URL: /bitchute\.com\/video\//,
   HLS_URL: /https:\/\/.*\.m3u8/,
   MPEG_URL: /https:\/\/.*\.mp4/,
-  PLAYLIST_URL: /^https:\/\/(old|www)\.bitchute\.com\/playlist\/(?:favorites|watch-later|recently-viewed|[a-zA-Z0-9]+)\/?(?:[?&][^#]*)?$/,
+  PLAYLIST_URL: /^https:\/\/(old|www)\.bitchute\.com\/(?:playlist\/(?:favorites|watch-later|recently-viewed|[a-zA-Z0-9_\-]+)\/?(?:[?&][^#]*)?|video\/playlist\?playlistId=([a-zA-Z0-9_\-]+))$/,
   PLAYLIST_PRIVATE: /\/playlist\/(favorites|watch-later|recently-viewed)/,
   IS_PRIVATE: /[?&]is-private=true(&|$)/,
   EXTRACT_PROFILE_ID: /\/profile\/([A-Za-z0-9_\-]+)\/?/,
@@ -339,7 +339,7 @@ source.getChannel = function (url) {
 source.getChannelPlaylists = (url) => {
   const isChannelUrl = REGEX.CHANNEL_URL.test(url);
   const isProfileUrl = REGEX.PROFILE_URL.test(url);
-  
+
   if(isChannelUrl) {
     // Not supported yet on source platform
     return new ContentPager([]);
@@ -347,17 +347,24 @@ source.getChannelPlaylists = (url) => {
     const profile_id = extractProfileId(url);
     const profileMeta = getProfile(url);
 
-    const config = {
-      cacheKey: 'profile_id',
-      cacheValue: profile_id,
-      url: URL_API.PROFILE_PLAYLISTS,
-      root: 'playlists',
-      request_body: {
-        offset: 0,
-        limit: 50,
-        profile_id: profile_id,
-      },
-      transform: (playlist) => {
+    // Direct API request for playlists to ensure proper data handling
+    try {
+      const responseBody = makeApiRequest(
+        URL_API.PROFILE_PLAYLISTS,
+        {
+          offset: 0,
+          limit: 50,
+          profile_id: profile_id,
+        }
+      );
+
+      if (!responseBody || !responseBody.playlists) {
+        log(`No playlists found for profile ${profile_id}`);
+        return new ContentPager([]);
+      }
+
+      // Transform playlists into platform objects
+      const playlists = responseBody.playlists.map(playlist => {
         return new PlatformPlaylist({
           id: new PlatformID(
             PLATFORM,
@@ -376,10 +383,16 @@ source.getChannelPlaylists = (url) => {
           videoCount: playlist.video_count,
           url: `${URL_WEB.BASE}/playlist/${playlist.playlist_id}`,
         });
-      }
-    };
-  
-    return createContentPager(config);
+      });
+
+      // Check if there are more pages (unlikey, but just in case)
+      const hasMore = responseBody.playlists && responseBody.playlists.length >= 50;
+
+      return new ContentPager(playlists, hasMore);
+    } catch (error) {
+      log(`Error fetching playlists: ${error.message}`);
+      return new ContentPager([]);
+    }
   }
 
   return new ContentPager([]);
@@ -678,16 +691,23 @@ source.getPlaylist = function (url) {
     throw new LoginRequiredException('Login to import Subscriptions');
   }
   
+  // First try to extract using our updated extraction function which handles both formats
   const playlist_id = extractPlaylistId(url) || extractPlaylistIdFromQuery(url);
+
+  // If that fails, try the query parameter extractor as a fallback
+  if (!playlist_id) {
+    throw new ScriptException(`Failed to extract playlist ID from URL: ${url}`);
+  }
+  
   let playlistInfo;
   let channel = {};
   let playlistName = playlist_id;
 
   if(!isSystemGeneratedPlaylist) {
     const playlistInfoResponse = http.POST(
-      URL_API.PLAYLIST, 
-      JSON.stringify({ playlist_id }), 
-      REQUEST_HEADERS, 
+      URL_API.PLAYLIST,
+      JSON.stringify({ playlist_id }),
+      REQUEST_HEADERS,
       true
     );
 
@@ -918,19 +938,42 @@ function extractProfileId(url) {
 
 /**
  * Extracts playlist ID from a BitChute playlist URL
- * 
+ * Supports both URL formats:
+ * - https://www.bitchute.com/playlist/PLAYLIST_ID/
+ * - https://www.bitchute.com/video/playlist?playlistId=PLAYLIST_ID
+ *
  * @param {string} url - BitChute playlist URL
  * @returns {string|null} - Playlist ID or null if not found
  */
 function extractPlaylistId(url) {
   const match = url.match(REGEX.PLAYLIST_URL);
 
-  return match ? match[2] : null;
+  if (match) {
+    // The third capture group (match[2]) contains the playlistId from the query parameter format
+    // If that's not present, then it's the standard format, extract from the path
+    if (match[2]) {
+      return match[2];
+    } else {
+      const pathParts = url.split('/');
+      for (let i = 0; i < pathParts.length; i++) {
+        if (pathParts[i] === 'playlist' && i+1 < pathParts.length) {
+          const playlistId = pathParts[i+1].split('?')[0].split('&')[0];
+          if (playlistId && playlistId !== 'favorites' &&
+              playlistId !== 'watch-later' && playlistId !== 'recently-viewed') {
+            return playlistId;
+          }
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 /**
  * Extracts playlist ID from a BitChute playlist query URL
- * 
+ * Supports URL format: https://www.bitchute.com/video/playlist?playlistId=PLAYLIST_ID
+ *
  * @param {string} url - BitChute playlist query URL
  * @returns {string|null} - Playlist ID or null if not found
  */
@@ -1512,10 +1555,10 @@ function createContentPager(config, initialVideos = []) {
     REQUEST_HEADERS,
     config.auth || false
   );
-  
+
   const transform = config.transform || (v => v);
-  
-  // Get videos from response
+
+  // Get videos or playlists from response
   let videos = [...initialVideos];
   if (responseBody[config.root]) {
     videos = [...videos, ...responseBody[config.root].map(e => transform(e))];
@@ -1644,21 +1687,29 @@ function getProfileContents(url) {
 
 function makeApiRequest(url, body, headers = REQUEST_HEADERS, requiresAuth = false) {
   try {
-
     // only stringify if body is an object
     if (typeof body === 'object') {
       body = JSON.stringify(body);
     }
 
     const res = http.POST(url, body, headers, requiresAuth);
-    
+
     if (!res.isOk) {
       throw new ScriptException(`API request failed: ${url} (${res.code})`);
     }
-    
-    return JSON.parse(res.body);
+
+    try {
+      return JSON.parse(res.body);
+    } catch (parseError) {
+      log(`Error parsing JSON from ${url}: ${parseError}`);
+      log(`Response body: ${res.body.substring(0, 200)}...`);
+      throw new ScriptException(`Invalid JSON response from ${url}: ${parseError.message}`);
+    }
   } catch (error) {
-    throw new ScriptException(`Invalid JSON response from ${url}`);
+    if (error instanceof ScriptException) {
+      throw error;
+    }
+    throw new ScriptException(`API request error for ${url}: ${error.message}`);
   }
 }
 
