@@ -43,13 +43,17 @@ const URL_WEB = {
 
 // Regular expressions for URL parsing
 const REGEX = {
-  PLAYLIST_BY_QUERY: /^https:\/\/www\.bitchute\.com\/video\/playlist\?playlistId=([a-zA-Z0-9_\-]+)$/,
+  // Playlist URL patterns split by type
+  PLAYLIST_SYSTEM: /^https:\/\/(old|www)\.bitchute\.com\/playlist\/(favorites|watch-later|recently-viewed)\/?(?:[?&][^#]*)?$/,
+  PLAYLIST_USER: /^https:\/\/(old|www)\.bitchute\.com\/playlist\/([a-zA-Z0-9_\-]+)\/?(?:[?&][^#]*)?$/,
+  PLAYLIST_QUERY: /^https:\/\/(old|www)\.bitchute\.com\/video\/playlist\?playlistId=([a-zA-Z0-9_\-]+)$/,
+
   CHANNEL_URL: /bitchute\.com\/channel\//,
   PROFILE_URL: /bitchute\.com\/profile\//,
   VIDEO_URL: /bitchute\.com\/video\//,
   HLS_URL: /https:\/\/.*\.m3u8/,
   MPEG_URL: /https:\/\/.*\.mp4/,
-  PLAYLIST_URL: /^https:\/\/(old|www)\.bitchute\.com\/(?:playlist\/(?:favorites|watch-later|recently-viewed|[a-zA-Z0-9_\-]+)\/?(?:[?&][^#]*)?|video\/playlist\?playlistId=([a-zA-Z0-9_\-]+))$/,
+
   PLAYLIST_PRIVATE: /\/playlist\/(favorites|watch-later|recently-viewed)/,
   IS_PRIVATE: /[?&]is-private=true(&|$)/,
   EXTRACT_PROFILE_ID: /\/profile\/([A-Za-z0-9_\-]+)\/?/,
@@ -677,23 +681,32 @@ source.getComments = function (url) {
  * Checks if a URL is a playlist URL
  */
 source.isPlaylistUrl = function (url) {
-  return REGEX.PLAYLIST_URL.test(url) || REGEX.PLAYLIST_BY_QUERY.test(url);
+  return REGEX.PLAYLIST_SYSTEM.test(url) ||
+         REGEX.PLAYLIST_USER.test(url) ||
+         REGEX.PLAYLIST_QUERY.test(url);
 };
 
 /**
  * Gets a playlist by URL
+ * Supports all playlist URL formats:
+ * - System playlists: https://(old|www).bitchute.com/playlist/(favorites|watch-later|recently-viewed)/
+ * - User playlists: https://(old|www).bitchute.com/playlist/PLAYLIST_ID/
+ * - Query playlists: https://(old|www).bitchute.com/video/playlist?playlistId=PLAYLIST_ID
  */
 source.getPlaylist = function (url) {
   const isPrivate = REGEX.IS_PRIVATE.test(url);
   const isSystemGeneratedPlaylist = REGEX.PLAYLIST_PRIVATE.test(url);
 
-  if (isPrivate && !bridge.isLoggedIn()) {
-    throw new LoginRequiredException('Login to import Subscriptions');
-  }
-  
-  // First try to extract using our updated extraction function which handles both formats
-  const playlist_id = extractPlaylistId(url) || extractPlaylistIdFromQuery(url);
+  if (isPrivate) {
 
+    if(!bridge.isLoggedIn()) {
+      throw new LoginRequiredException('Login to import Subscriptions');
+    }
+    url = url.replace(`&${IS_PRIVATE_SUFFIX}`, '');
+  }
+
+  // Extract playlist ID using our improved extraction functions
+  const playlist_id = extractPlaylistId(url);
   // If that fails, try the query parameter extractor as a fallback
   if (!playlist_id) {
     throw new ScriptException(`Failed to extract playlist ID from URL: ${url}`);
@@ -710,7 +723,6 @@ source.getPlaylist = function (url) {
       REQUEST_HEADERS,
       true
     );
-
     if(playlistInfoResponse.isOk) {
       playlistInfo = JSON.parse(playlistInfoResponse.body);
       playlistName = playlistInfo?.playlist_name || playlist_id;
@@ -938,48 +950,34 @@ function extractProfileId(url) {
 
 /**
  * Extracts playlist ID from a BitChute playlist URL
- * Supports both URL formats:
- * - https://www.bitchute.com/playlist/PLAYLIST_ID/
- * - https://www.bitchute.com/video/playlist?playlistId=PLAYLIST_ID
+ * Supports all URL formats:
+ * - System playlists: https://www.bitchute.com/playlist/favorites/
+ * - User playlists: https://www.bitchute.com/playlist/PLAYLIST_ID/
+ * - Query playlists: https://www.bitchute.com/video/playlist?playlistId=PLAYLIST_ID
  *
  * @param {string} url - BitChute playlist URL
  * @returns {string|null} - Playlist ID or null if not found
  */
 function extractPlaylistId(url) {
-  const match = url.match(REGEX.PLAYLIST_URL);
-
+  // Check for system playlists (favorites, watch-later, recently-viewed)
+  let match = url.match(REGEX.PLAYLIST_SYSTEM);
   if (match) {
-    // The third capture group (match[2]) contains the playlistId from the query parameter format
-    // If that's not present, then it's the standard format, extract from the path
-    if (match[2]) {
-      return match[2];
-    } else {
-      const pathParts = url.split('/');
-      for (let i = 0; i < pathParts.length; i++) {
-        if (pathParts[i] === 'playlist' && i+1 < pathParts.length) {
-          const playlistId = pathParts[i+1].split('?')[0].split('&')[0];
-          if (playlistId && playlistId !== 'favorites' &&
-              playlistId !== 'watch-later' && playlistId !== 'recently-viewed') {
-            return playlistId;
-          }
-        }
-      }
-    }
+    return match[2]; // Return the system playlist name as the ID
+  }
+
+  // Check for user playlists
+  match = url.match(REGEX.PLAYLIST_USER);
+  if (match) {
+    return match[2]; // Return the user playlist ID
+  }
+
+  // Check for query parameter playlists
+  match = url.match(REGEX.PLAYLIST_QUERY);
+  if (match) {
+    return match[2]; // Return the playlist ID from query
   }
 
   return null;
-}
-
-/**
- * Extracts playlist ID from a BitChute playlist query URL
- * Supports URL format: https://www.bitchute.com/video/playlist?playlistId=PLAYLIST_ID
- *
- * @param {string} url - BitChute playlist query URL
- * @returns {string|null} - Playlist ID or null if not found
- */
-function extractPlaylistIdFromQuery(url) {
-  const match = url.match(REGEX.PLAYLIST_BY_QUERY);
-  return match ? match[1] : null;
 }
 
 /**
