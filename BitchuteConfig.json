@@ -109,6 +109,7 @@
   "changelog": {
     "10": [
       "Fix: Fix search;",
+      "Improvement: Add live chat support;",
       "Improvement: Improved playlist URL handling;"
     ],
     "9": [

@@ -847,6 +847,25 @@ source.getUserPlaylists = function () {
   return playlists;
 };
 
+
+/**
+ * Returns chat window information for live bitchute streams with chat
+ * @param {string} url - The video URL
+ * @returns {Object|null} Chat window configuration or null if chat not available
+ */
+source.getLiveChatWindow = function (url) {
+  
+  const videoId = extractVideoIDFromUrl(url);
+
+  if (videoId) {
+    return {
+      url: `https://www.bitchute.com/popChat/${videoId}`,
+      removeElements: [],
+      removeElementsInterval: []
+    };
+  }
+};
+
 //================ HELPER FUNCTIONS ================//
 
 /**
